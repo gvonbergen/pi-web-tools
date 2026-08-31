@@ -1,0 +1,121 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { WebToolsError } from "../src/errors.ts";
+import { autoFetch, probeCamoufox, renderedFetch, runCamoufoxBridge } from "../src/fetch/rendered.ts";
+
+const GUARD = { allowLocalNetworks: true };
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("firecrawl client", () => {
+  const opts = {
+    ...GUARD,
+    renderer: "firecrawl" as const,
+    bridgeScript: undefined as string | undefined,
+    firecrawlApiKey: "fc-key",
+    python: "python3",
+    maxBytes: 65536,
+    timeoutMs: 2000,
+  };
+
+  it("posts to the scrape endpoint and maps markdown", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        expect((init.headers as Record<string, string>).authorization).toBe("Bearer fc-key");
+        const body = JSON.parse(String(init.body));
+        expect(body.formats).toContain("markdown");
+        return Response.json({ data: { markdown: "# Rendered page", metadata: { title: "T", sourceURL: "https://example.com" } } });
+      }),
+    );
+    const result = await renderedFetch("https://example.com", opts);
+    expect(result.tier).toBe("rendered");
+    expect(result.provider).toBe("firecrawl");
+    expect(result.markdown).toContain("Rendered page");
+    expect(result.warning).toMatch(/third-party/); // remote egress caveat
+  });
+
+  it("maps 402 to E_QUOTA_EXHAUSTED", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("payment", { status: 402 })));
+    await expect(renderedFetch("https://example.com", opts)).rejects.toMatchObject({ code: "E_QUOTA_EXHAUSTED" });
+  });
+
+  it("maps 429 to E_RATE_LIMIT", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("rate", { status: 429 })));
+    await expect(renderedFetch("https://example.com", opts)).rejects.toMatchObject({ code: "E_RATE_LIMIT" });
+  });
+
+  it("throws E_RENDERER_UNAVAILABLE without a key", async () => {
+    await expect(renderedFetch("https://example.com", { ...opts, firecrawlApiKey: undefined })).rejects.toMatchObject({ code: "E_RENDERER_UNAVAILABLE" });
+  });
+
+  it("rejects SSRF targets before calling the remote service", async () => {
+    await expect(renderedFetch("http://127.0.0.1:9000/", { ...opts, allowLocalNetworks: false })).rejects.toMatchObject({ code: "E_SSRF_BLOCKED" });
+  });
+});
+
+describe("tier=auto escalation", () => {
+  it("escalates at most once and degrades gracefully when no renderer exists", async () => {
+    // autoFetch with an SPA served locally + no camoufox/firecrawl → light result with renderingUnavailable.
+    const { createServer } = await import("node:http");
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end('<!doctype html><html><body><div id="root"></div></body></html>');
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const addr = server.address() as { port: number };
+    try {
+      const result = await autoFetch(`http://127.0.0.1:${addr.port}/`, {
+        ...GUARD,
+        renderer: "camoufox",
+        python: "definitely-not-a-real-python-binary",
+        maxBytes: 65536,
+        timeoutMs: 2000,
+      });
+      expect(result.tier).toBe("light");
+      expect(result.needsRendering).toBe(true);
+      expect(result.renderingUnavailable).toBe(true);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("does not escalate on SSRF/unsupported errors", async () => {
+    await expect(
+      autoFetch("file:///etc/passwd", { ...GUARD, renderer: "firecrawl", firecrawlApiKey: "k", python: "python3", maxBytes: 1000, timeoutMs: 1000 }),
+    ).rejects.toMatchObject({ code: "E_INJECTION_GUARD" });
+  });
+});
+
+describe("camoufox probe + bridge", () => {
+  it("probe returns a boolean without throwing", async () => {
+    const ok = await probeCamoufox("python3");
+    expect(typeof ok).toBe("boolean");
+  });
+
+  it("probe fails fast for a missing interpreter", async () => {
+    expect(await probeCamoufox("no-such-python")).toBe(false);
+  });
+
+  it("bridge rejects with E_RENDERER_UNAVAILABLE when the interpreter is missing", async () => {
+    await expect(
+      runCamoufoxBridge("https://example.com", { ...GUARD, renderer: "camoufox", python: "no-such-python", maxBytes: 1000, timeoutMs: 1000 }),
+    ).rejects.toMatchObject({ code: "E_RENDERER_UNAVAILABLE" });
+  });
+
+  it("bridge cleanup: abort kills the child process (no orphan)", async () => {
+    // Use a python script that sleeps long enough to be killed mid-flight.
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "pwt-test-"));
+    const script = join(dir, "slow_bridge.py");
+    writeFileSync(script, "import time, sys\ntime.sleep(30)\n");
+    const controller = new AbortController();
+    const opts = { ...GUARD, renderer: "camoufox" as const, python: "python3", bridgeScript: script, maxBytes: 1000, timeoutMs: 30_000, signal: controller.signal };
+    const p = runCamoufoxBridge("https://example.com", opts);
+    setTimeout(() => controller.abort(), 100);
+    await expect(p).rejects.toMatchObject({ code: "E_CANCELLED" });
+  });
+});
