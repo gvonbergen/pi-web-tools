@@ -1,0 +1,53 @@
+{
+  "name": "pi-web-tools",
+  "version": "0.1.0",
+  "description": "Pi extension: provider-neutral web/news/image/video/places search (Serper.dev + Brave) and tiered web_fetch (light HTTP + rendered via Camoufox/Firecrawl).",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "search",
+    "web-fetch"
+  ],
+  "license": "MIT",
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  },
+  "main": "extensions/index.ts",
+  "files": [
+    "extensions",
+    "src",
+    "python",
+    "docs",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "dompurify": "^3.2.0",
+    "jsdom": "^27.0.0",
+    "turndown": "^7.2.0"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^30.0.0",
+    "@types/node": "^24.0.0",
+    "@types/turndown": "^5.0.5",
+    "typebox": "^1.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

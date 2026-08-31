@@ -1,0 +1,37 @@
+# Configuration
+
+All configuration is environment-only (no config files in v0.1). Precedence: env var > compiled default. Secrets are read from the environment only and are never stored in repo files, logs, or tool output.
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `SERPER_API_KEY` | Serper.dev key (`X-API-KEY`) | unset → Serper disabled |
+| `BRAVE_API_KEY` | Brave Search API key (`X-Subscription-Token`) | unset → Brave disabled |
+| `FIRE_CRAWL_API_KEY` | Firecrawl key | unset → Firecrawl disabled |
+| `PI_WEB_TOOLS_SEARCH_PROVIDER` | `serper` \| `brave` — default provider | `serper` if its key is present, else `brave` |
+| `PI_WEB_TOOLS_RENDERER` | `camoufox` \| `firecrawl` — rendered-tier engine | `camoufox` (local-first); falls to `firecrawl` only when explicitly selected |
+| `PI_WEB_TOOLS_RAW` | `1` enables the `provider_raw` escape hatch | `0` |
+| `PI_WEB_TOOLS_CACHE_TTL_MS` | search cache TTL | `300000` (5 min) |
+| `PI_WEB_TOOLS_CACHE_MAX_ENTRIES` | cache capacity (LRU) | `500` |
+| `PI_WEB_TOOLS_MAX_CALLS_PER_SESSION` | per-session call budget across providers (`0` = unlimited) | `0` |
+| `PI_WEB_TOOLS_ALLOW_LOCAL_NETWORKS` | `1` allows private/loopback/link-local targets (dev only; disables SSRF blocking) | `0` |
+| `PI_WEB_TOOLS_FETCH_MAX_BYTES` | light-fetch body cap | `2097152` (2 MiB) |
+| `PI_WEB_TOOLS_TIMEOUT_MS` | per-request timeout | `30000` |
+| `PI_WEB_TOOLS_PYTHON` | python3 executable for the Camoufox bridge | `python3` |
+| `PI_WEB_TOOLS_PROVIDER_CONCURRENCY` | in-process provider-call semaphore | `3` |
+
+## Behavior notes
+
+- **No silent fallbacks.** If the selected provider's key is missing, tools throw `E_NO_PROVIDER` / `E_PROVIDER_MISSING` with setup guidance; they never silently switch providers.
+- Tools are registered dynamically: only configured providers are advertised; with no keys, search tools still register but every call fails with an actionable error.
+- `PI_WEB_TOOLS_ALLOW_LOCAL_NETWORKS=1` is a developer convenience that disables all SSRF blocking; do not enable it in environments that touch untrusted URLs.
+
+## Example: settings.json env hooks
+
+```json
+{
+  "env": {
+    "SERPER_API_KEY": "...",
+    "PI_WEB_TOOLS_SEARCH_PROVIDER": "serper"
+  }
+}
+```
