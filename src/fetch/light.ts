@@ -55,13 +55,23 @@ export interface LightFetchOutput {
 }
 
 export async function lightFetch(rawUrl: string, opts: LightFetchOptions): Promise<LightFetchOutput> {
-  let current = parseAndValidateUrl(rawUrl, opts);
+  // The caller-supplied URL honors allowLocalNetworks; redirect targets do
+  // not. Every hop is re-validated with the FULL strict guard (scheme,
+  // userinfo, private/loopback/link-local/ULA blocks, DNS resolution) so a
+  // locally-allowed origin cannot be used as a trampoline into the internal
+  // network. The one exception is a hop that stays on the exact host:port the
+  // caller explicitly requested — that changes no network destination, so the
+  // override still applies there.
+  const strictOpts: UrlGuardOptions = { allowLocalNetworks: false };
+  const entry = parseAndValidateUrl(rawUrl, opts);
+  let current = entry;
   let finalUrl = current.toString();
   let response: Response | undefined;
 
+  // Per-hop recheck: resolve DNS and verify every address is public.
+  await assertHostResolvesSafe(current, opts);
+
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    // Per-hop recheck: resolve DNS and verify every address is public.
-    await assertHostResolvesSafe(current, opts);
     response = await guardedFetch(current.toString(), opts);
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
@@ -70,8 +80,11 @@ export async function lightFetch(rawUrl: string, opts: LightFetchOptions): Promi
         throw new WebToolsError("E_NETWORK", `Too many redirects (>${MAX_REDIRECTS})`);
       }
       const next = new URL(location, current);
+      const exempt = opts.allowLocalNetworks && next.host === entry.host;
+      const guard = exempt ? opts : strictOpts;
       // Re-validate the redirect target from scratch (scheme/userinfo/SSRF).
-      current = parseAndValidateUrl(next.toString(), opts);
+      current = parseAndValidateUrl(next.toString(), guard);
+      if (!exempt) await assertHostResolvesSafe(current, guard);
       continue;
     }
     finalUrl = current.toString();
