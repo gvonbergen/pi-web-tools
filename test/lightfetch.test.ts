@@ -14,7 +14,7 @@ let baseUrl: string;
 const PAGE_HTML = `<!doctype html><html><head><title>Test Page</title></head><body><article><h1>Hello</h1><p>This is a reasonably long article body with plenty of prose. It contains several sentences of meaningful content so that the readability extraction produces more than the minimum number of characters required before the tool would flag the page as needing JavaScript rendering. Extra filler sentences follow to be safe.</p><p>Second paragraph with additional detail about the topic at hand, ensuring the extracted markdown comfortably exceeds the three-hundred-character minimum content threshold in the light fetch tier.</p></article></body></html>`;
 const SPA_HTML = `<!doctype html><html><head><title>SPA</title></head><body><div id="root"></div><script>window.__INITIAL_STATE__={}</script></body></html>`;
 
-function startServer(handler: (req: { url?: string }, res: import("node:http").ServerResponse) => void): Promise<void> {
+function startServer(handler: (req: { url?: string; headers: import("node:http").IncomingHttpHeaders }, res: import("node:http").ServerResponse) => void): Promise<void> {
   return new Promise((resolve) => {
     server = createServer(handler);
     server.listen(0, "127.0.0.1", () => {
@@ -35,13 +35,24 @@ beforeAll(async () => {
       res.writeHead(200, { "content-type": "text/html" });
       res.end(SPA_HTML);
     } else if (path === "/redirect-internal") {
-      res.writeHead(302, { location: `${baseUrl}/ok` });
+      res.writeHead(302, { location: `http://${req.headers.host}/ok` });
       res.end();
     } else if (path === "/redirect-loop") {
-      res.writeHead(302, { location: `${baseUrl}/redirect-loop` });
+      res.writeHead(302, { location: `http://${req.headers.host}/redirect-loop` });
+      res.end();
+    } else if (path === "/redirect-chain-a") {
+      res.writeHead(302, { location: `http://${req.headers.host}/redirect-chain-b` });
+      res.end();
+    } else if (path === "/redirect-chain-b") {
+      res.writeHead(302, { location: `http://${req.headers.host}/ok` });
       res.end();
     } else if (path === "/redirect-private") {
       res.writeHead(302, { location: "http://169.254.169.254/latest/meta-data/" });
+      res.end();
+    } else if (path === "/redirect-localhost") {
+      // Same fixture server (would respond 200 via /ok) under a different
+      // hostname — proves the block comes from the guard, not the network.
+      res.writeHead(302, { location: `http://localhost:${req.headers.host?.split(":")[1]}/ok` });
       res.end();
     } else if (path === "/redirect-bad-scheme") {
       res.writeHead(302, { location: "ftp://example.com/x" });
@@ -128,13 +139,29 @@ describe("lightFetch: SPA / rendering hints", () => {
 
 describe("lightFetch: security limits", () => {
   it("blocks redirect chains to private/link-local addresses", async () => {
-    // Note: these fixtures run with allowLocalNetworks=true (needed to reach
-    // 127.0.0.1), which disables IP-range blocking entirely. In that mode the
-    // redirect either fails at connect time (E_NETWORK) or is blocked
-    // (E_SSRF_BLOCKED on the target scheme/host checks). The strict-guard
-    // behavior (E_SSRF_BLOCKED) is covered by urlguard unit tests + literal-IP
-    // URL checks that remain active regardless.
-    await expect(lightFetch(`${baseUrl}/redirect-private`, BASE_OPTS)).rejects.toMatchObject({ code: expect.stringMatching(/E_SSRF_BLOCKED|E_NETWORK|E_TIMEOUT/) });
+    // The allowLocalNetworks override exists only so the tests can reach the
+    // 127.0.0.1 fixture; it does NOT cascade to redirect targets. Every hop
+    // is re-validated with the strict guard, so 169.254.169.254 (link-local)
+    // is blocked before any connection is attempted — deterministically,
+    // including on CI runners where that address is answerable (IMDS 404).
+    await expect(lightFetch(`${baseUrl}/redirect-private`, BASE_OPTS)).rejects.toMatchObject({ code: "E_SSRF_BLOCKED" });
+  });
+
+  it("blocks a redirect to a loopback host with E_SSRF_BLOCKED even when the target would respond 200", async () => {
+    // http://localhost:<port>/ok is the same fixture server that serves a
+    // successful page — the block must come from the guard, not the network.
+    await expect(lightFetch(`${baseUrl}/redirect-localhost`, BASE_OPTS)).rejects.toMatchObject({ code: "E_SSRF_BLOCKED" });
+  });
+
+  it("follows a legitimate multi-hop redirect chain to success", async () => {
+    // Hermetic stand-in for a public chain: offline tests cannot reach a real
+    // public host, so this exercises the same follow path (guard re-check per
+    // hop, ≤5 cap, final-URL provenance) over hops that stay on the requested
+    // origin. Cross-host hops are proven strictly validated by the two tests
+    // above.
+    const { result } = await lightFetch(`${baseUrl}/redirect-chain-a`, BASE_OPTS);
+    expect(result.finalUrl).toBe(`${baseUrl}/ok`);
+    expect(result.markdown).toContain("Hello");
   });
 
   it("blocks redirects to disallowed schemes", async () => {
