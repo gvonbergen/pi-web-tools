@@ -37,6 +37,25 @@ describe("config", () => {
     expect(loadConfig({} as unknown as NodeJS.ProcessEnv).allowLocalNetworks).toBe(false);
   });
 
+  it("ssrf host allowlist is empty by default", () => {
+    const cfg = loadConfig({} as unknown as NodeJS.ProcessEnv);
+    expect(cfg.allowedHosts).toEqual([]);
+  });
+
+  it("parses PI_WEB_TOOLS_ALLOWED_HOSTS into normalized patterns", () => {
+    const cfg = loadConfig({ PI_WEB_TOOLS_ALLOWED_HOSTS: "*.v7n.ch, Example.com" } as unknown as NodeJS.ProcessEnv);
+    expect(cfg.allowedHosts).toEqual([
+      { pattern: "*.v7n.ch", wildcard: true, host: "v7n.ch" },
+      { pattern: "example.com", wildcard: false, host: "example.com" },
+    ]);
+  });
+
+  it("fails closed on malformed allowlist entries", () => {
+    for (const bad of ["*", "*.v7n.ch,*", "10.0.0.1", "a.com:8080"]) {
+      expect(() => loadConfig({ PI_WEB_TOOLS_ALLOWED_HOSTS: bad } as unknown as NodeJS.ProcessEnv)).toThrow(/PI_WEB_TOOLS_ALLOWED_HOSTS/);
+    }
+  });
+
   it("masks keys without revealing them", () => {
     expect(maskKey("sk-abcdef1234567890")).toBe("sk-…7890");
     expect(maskKey(undefined)).toBeUndefined();

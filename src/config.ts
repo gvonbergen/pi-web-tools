@@ -4,6 +4,8 @@
  * Secret values are never logged; `maskKey` produces operator-safe previews.
  */
 
+import { parseAllowedHostsEnv, type ParsedHostPattern } from "./security/hostpatterns.ts";
+
 export type SearchProviderId = "serper" | "brave";
 export type RendererId = "camoufox" | "firecrawl";
 
@@ -19,6 +21,8 @@ export interface Config {
   cacheTtlMs: number;
   maxCallsPerSession: number; // 0 = unlimited
   allowLocalNetworks: boolean;
+  /** Explicit SSRF-exception host allowlist (empty by default; see docs/security.md). */
+  allowedHosts: ParsedHostPattern[];
   fetchMaxBytes: number;
   timeoutMs: number;
   python: string;
@@ -70,6 +74,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     cacheTtlMs: intEnv(env, "PI_WEB_TOOLS_CACHE_TTL_MS", 300_000),
     maxCallsPerSession: intEnv(env, "PI_WEB_TOOLS_MAX_CALLS_PER_SESSION", 0),
     allowLocalNetworks: boolEnv(env, "PI_WEB_TOOLS_ALLOW_LOCAL_NETWORKS"),
+    // Throws E_CONFIG on malformed entries (fail closed — a silently-dropped
+    // allowlist entry would either weaken or silently change protection).
+    allowedHosts: parseAllowedHostsEnv(env.PI_WEB_TOOLS_ALLOWED_HOSTS),
     fetchMaxBytes: intEnv(env, "PI_WEB_TOOLS_FETCH_MAX_BYTES", 2 * 1024 * 1024),
     timeoutMs: intEnv(env, "PI_WEB_TOOLS_TIMEOUT_MS", 30_000),
     python: env.PI_WEB_TOOLS_PYTHON?.trim() || "python3",

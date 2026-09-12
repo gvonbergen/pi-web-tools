@@ -55,14 +55,16 @@ export interface LightFetchOutput {
 }
 
 export async function lightFetch(rawUrl: string, opts: LightFetchOptions): Promise<LightFetchOutput> {
-  // The caller-supplied URL honors allowLocalNetworks; redirect targets do
-  // not. Every hop is re-validated with the FULL strict guard (scheme,
+  // The caller-supplied URL honors allowLocalNetworks and the explicit host
+  // allowlist; redirect targets honor only the allowlist. Every hop is
+  // re-validated with the FULL strict guard for allowLocalNetworks (scheme,
   // userinfo, private/loopback/link-local/ULA blocks, DNS resolution) so a
   // locally-allowed origin cannot be used as a trampoline into the internal
-  // network. The one exception is a hop that stays on the exact host:port the
-  // caller explicitly requested — that changes no network destination, so the
-  // override still applies there.
-  const strictOpts: UrlGuardOptions = { allowLocalNetworks: false };
+  // network. Two exceptions: a hop that stays on the exact host:port the
+  // caller explicitly requested (no network-destination change), and hops to
+  // hosts on the operator's PI_WEB_TOOLS_ALLOWED_HOSTS allowlist, which are
+  // per-host opt-ins honored on every hop.
+  const strictOpts: UrlGuardOptions = { allowLocalNetworks: false, allowedHosts: opts.allowedHosts };
   const entry = parseAndValidateUrl(rawUrl, opts);
   let current = entry;
   let finalUrl = current.toString();

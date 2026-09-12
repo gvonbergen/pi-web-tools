@@ -147,6 +147,15 @@ describe("lightFetch: security limits", () => {
     await expect(lightFetch(`${baseUrl}/redirect-private`, BASE_OPTS)).rejects.toMatchObject({ code: "E_SSRF_BLOCKED" });
   });
 
+  it("configured host allowlist does not weaken redirect re-validation", async () => {
+    // The allowlist propagates to redirect hops, but only for hosts it
+    // actually matches; 169.254.169.254 is not allowlisted, so the strict
+    // guard must still block the hop even though the entry URL was fetched
+    // with an allowlist present.
+    const opts = { ...BASE_OPTS, allowedHosts: [{ pattern: "*.v7n.ch", wildcard: true, host: "v7n.ch" }] };
+    await expect(lightFetch(`${baseUrl}/redirect-private`, opts)).rejects.toMatchObject({ code: "E_SSRF_BLOCKED" });
+  });
+
   it("blocks a redirect to a loopback host with E_SSRF_BLOCKED even when the target would respond 200", async () => {
     // http://localhost:<port>/ok is the same fixture server that serves a
     // successful page — the block must come from the guard, not the network.

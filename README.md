@@ -46,7 +46,7 @@ Serper uses the Google places pack (stable `cid` ids). Brave uses web-search loc
 { "url": "https://example.com", "tier": "auto", "renderer": "camoufox", "maxBytes": 2097152, "timeoutMs": 30000 }
 ```
 
-- **`tier=light`** — plain HTTP: SSRF guard, ≤5 redirects with per-hop re-check, 2 MiB body cap (compressed and decompressed), MIME gating, Readability → DOMPurify → Turndown extraction to markdown. Optional pdftotext (poppler) for PDFs.
+- **`tier=light`** — plain HTTP: SSRF guard, ≤5 redirects with per-hop re-check, 2 MiB body cap (compressed and decompressed), MIME gating, Readability → DOMPurify → Turndown extraction to markdown. Optional pdftotext (poppler) for PDFs. Named hosts whose DNS deliberately resolves into private space can be exempted via `PI_WEB_TOOLS_ALLOWED_HOSTS` (per-host opt-in, empty by default — see [docs/security.md](docs/security.md)).
 - **`tier=rendered`** — JavaScript-heavy pages. Default renderer: **Camoufox** (local, free; captain decision D2). Firecrawl (remote, paid) is available via `FIRE_CRAWL_API_KEY` and `PI_WEB_TOOLS_RENDERER=firecrawl` or per-call `renderer` override. Firecrawl is **never** used as a silent fallback.
 - **`tier=auto`** — runs light; if the page looks like a JS shell it escalates to rendered **at most once**. If no renderer is available, the light result is returned with `renderingUnavailable: true` instead of failing.
 

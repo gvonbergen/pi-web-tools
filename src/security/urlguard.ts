@@ -3,15 +3,27 @@
  * loopback, link-local, ULA, CGNAT and unspecified address ranges for both
  * IPv4 and IPv6 (including IPv4-mapped IPv6). DNS is resolved and every
  * resolved address is checked; callers must re-check after every redirect hop
- * and immediately before connecting (DNS rebinding mitigation).
+ * and immediately before connecting (DNS rebinding mitigation). An explicit
+ * operator allowlist (PI_WEB_TOOLS_ALLOWED_HOSTS, see ./hostpatterns.ts)
+ * can exempt named hosts from the IP-range checks; it never relaxes scheme/
+ * userinfo parsing and never applies to literal-IP URLs.
  */
 
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { WebToolsError } from "../errors.ts";
+import { hostMatchesAllowed, type ParsedHostPattern } from "./hostpatterns.ts";
 
 export interface UrlGuardOptions {
   allowLocalNetworks: boolean;
+  /**
+   * Explicit operator allowlist (PI_WEB_TOOLS_ALLOWED_HOSTS): hostnames
+   * exempt from the SSRF/private-address checks. Empty by default; matching
+   * semantics in ./hostpatterns.ts. Does NOT relax scheme/userinfo parsing,
+   * and is honored per-hop on redirects (unlike allowLocalNetworks, which
+   * redirect re-validation always strips).
+   */
+  allowedHosts?: readonly ParsedHostPattern[];
 }
 
 /** Parse + validate the URL surface (scheme, userinfo). Does not resolve DNS. */
@@ -32,24 +44,30 @@ export function parseAndValidateUrl(raw: string, opts: UrlGuardOptions): URL {
     throw new WebToolsError("E_INJECTION_GUARD", "URL has no hostname");
   }
   if (!opts.allowLocalNetworks) {
-    // Reject obviously-local hostnames before DNS even happens.
     const host = url.hostname.toLowerCase();
-    if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) {
-      throw new WebToolsError("E_SSRF_BLOCKED", `Blocked local hostname: ${host}`);
-    }
-    // Literal IPs in the URL.
-    const bare = host.replace(/^\[|\]$/g, "");
-    if (isIP(bare)) {
-      assertIpAllowed(bare, opts);
+    const allowed = hostMatchesAllowed(host, opts.allowedHosts ?? []);
+    if (!allowed) {
+      // Reject obviously-local hostnames before DNS even happens.
+      if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) {
+        throw new WebToolsError("E_SSRF_BLOCKED", `Blocked local hostname: ${host}`);
+      }
+      // Literal IPs in the URL.
+      const bare = host.replace(/^\[|\]$/g, "");
+      if (isIP(bare)) {
+        assertIpAllowed(bare, opts);
+      }
     }
   }
   return url;
 }
 
-/** Resolve hostname and verify every resolved address is public. */
+/** Resolve hostname and verify every resolved address is public.
+ * Hosts on the explicit allowlist skip this check entirely (operator opt-in
+ * for names whose DNS intentionally resolves into private space). */
 export async function assertHostResolvesSafe(url: URL, opts: UrlGuardOptions): Promise<void> {
   if (opts.allowLocalNetworks) return;
   const host = url.hostname.replace(/^\[|\]$/g, "");
+  if (hostMatchesAllowed(host, opts.allowedHosts ?? [])) return;
   if (isIP(host)) {
     assertIpAllowed(host, opts);
     return;
