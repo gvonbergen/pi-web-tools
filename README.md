@@ -47,7 +47,7 @@ Serper uses the Google places pack (stable `cid` ids). Brave uses web-search loc
 ```
 
 - **`tier=light`** — plain HTTP: SSRF guard, ≤5 redirects with per-hop re-check, 2 MiB body cap (compressed and decompressed), MIME gating, Readability → DOMPurify → Turndown extraction to markdown. Optional pdftotext (poppler) for PDFs. Named hosts whose DNS deliberately resolves into private space can be exempted via `PI_WEB_TOOLS_ALLOWED_HOSTS` (per-host opt-in, empty by default — see [docs/security.md](docs/security.md)).
-- **`tier=rendered`** — JavaScript-heavy pages. Default renderer: **Camoufox** (local, free; captain decision D2). Firecrawl (remote, paid) is available via `FIRE_CRAWL_API_KEY` and `PI_WEB_TOOLS_RENDERER=firecrawl` or per-call `renderer` override. Firecrawl is **never** used as a silent fallback.
+- **`tier=rendered`** — JavaScript-heavy pages. Default renderer: **Camoufox** (local, free; captain decision D2). Firecrawl (remote, paid) is available via `FIRE_CRAWL_API_KEY` and `PI_WEB_TOOLS_RENDERER=firecrawl` or per-call `renderer` override. Point it at a self-hosted server with `PI_WEB_TOOLS_FIRECRAWL_BASE_URL` (e.g. `http://localhost:3002`); by default the cloud endpoint `https://api.firecrawl.dev` is used. Firecrawl is **never** used as a silent fallback.
 - **`tier=auto`** — runs light; if the page looks like a JS shell it escalates to rendered **at most once**. If no renderer is available, the light result is returned with `renderingUnavailable: true` instead of failing.
 
 Fetched page content is always wrapped with an explicit *untrusted data* label so the model treats it as data, not instructions.
@@ -62,6 +62,7 @@ export BRAVE_API_KEY=...         # https://brave.com/search/api
 # rendered fetch (optional)
 pip install "camoufox[geoip]" && python -m camoufox fetch   # local renderer
 export FIRE_CRAWL_API_KEY=...    # or the remote renderer
+export PI_WEB_TOOLS_FIRECRAWL_BASE_URL=http://localhost:3002   # optional: self-hosted Firecrawl server instead of the cloud
 ```
 
 ## Status command
