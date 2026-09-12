@@ -166,7 +166,7 @@ export default function piWebTools(pi: ExtensionAPI): void {
       if (signal?.aborted) return cancelledResult();
       const maxBytes = args.maxBytes ?? config.fetchMaxBytes;
       const timeoutMs = args.timeoutMs ?? config.timeoutMs;
-      const guard = { allowLocalNetworks: config.allowLocalNetworks, maxBytes, timeoutMs, signal };
+      const guard = { allowLocalNetworks: config.allowLocalNetworks, allowedHosts: config.allowedHosts, maxBytes, timeoutMs, signal };
       try {
         const tier = args.tier ?? "auto";
         let result;
@@ -267,6 +267,7 @@ export default function piWebTools(pi: ExtensionAPI): void {
         `  default search provider: ${config.searchProvider ?? "(none — search will error until a key is set)"}`,
         `  default renderer: ${core.rendererFor()}${config.renderer ? " (operator-set)" : ""}`,
         `  raw escape hatch: ${config.rawEnabled ? "enabled" : "disabled (PI_WEB_TOOLS_RAW=1 to enable)"}`,
+        `  ssrf host allowlist: ${config.allowedHosts.length ? config.allowedHosts.map((p) => p.pattern).join(", ") : "empty (PI_WEB_TOOLS_ALLOWED_HOSTS)"}`,
         `  cache: ${core.cache.size} entr(y/ies), ttl ${config.cacheTtlMs}ms`,
         `  session calls: serper=${core.counters.serper} brave=${core.counters.brave} firecrawl=${core.counters.firecrawl} camoufox=${core.counters.camoufox}`,
       ];

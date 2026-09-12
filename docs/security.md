@@ -14,6 +14,12 @@ pi-web-tools fetches untrusted web content and talks to paid third-party APIs. D
 - IPv4-mapped IPv6 (`::ffff:10.0.0.1`) is unmasked and checked against the same list.
 - **Redirects are followed manually (≤5 hops) and every hop is re-validated** — scheme, credentials, and SSRF — so a public page cannot redirect the fetcher into your intranet or a cloud metadata endpoint (169.254.169.254).
 - Literal-IP URLs are checked at parse time.
+- **Explicit host allowlist:** `PI_WEB_TOOLS_ALLOWED_HOSTS` (comma-separated, default empty) exempts named hosts from the private-address/DNS checks — for hosts whose DNS intentionally resolves into private space (e.g. an internal site at `*.v7n.ch` behind a VPN gateway). Semantics are strict and documented in `src/security/hostpatterns.ts`:
+  - Exact hostnames (`v7n.ch`) and wildcard subdomains (`*.v7n.ch`) only; a single leading `*.` is the only wildcard, and a bare `*` is rejected, so the list can never act as a global disable switch.
+  - `*.example.com` matches subdomains at any depth but **not** the apex — list both when both are needed.
+  - Matching is case-insensitive; a hostname that is a literal IP can never match (patterns must be names), so arbitrary-IP allowlisting is impossible by construction.
+  - For a matched host, only the private-address checks are lifted; scheme/userinfo parsing, redirect handling, size caps, MIME gating, and all checks for non-matching hosts are untouched. Redirect hops re-validate against the allowlist per hop (unlike `allowLocalNetworks`, which is always stripped on redirects).
+  - Malformed entries abort extension startup with `E_CONFIG` instead of being silently ignored.
 - The only bypass is `PI_WEB_TOOLS_ALLOW_LOCAL_NETWORKS=1`, which disables all IP-range blocking and is intended for local development only.
 
 ## Resource limits

@@ -12,6 +12,7 @@ export type ErrorCode =
   | "E_QUOTA_EXHAUSTED"
   | "E_COST_CAP"
   | "E_BAD_REQUEST"
+  | "E_CONFIG"
   | "E_NETWORK"
   | "E_TIMEOUT"
   | "E_CANCELLED"
