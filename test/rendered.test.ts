@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebToolsError } from "../src/errors.ts";
-import { autoFetch, probeCamoufox, renderedFetch, runCamoufoxBridge } from "../src/fetch/rendered.ts";
+import { firecrawlScrapeEndpoint, autoFetch, probeCamoufox, renderedFetch, runCamoufoxBridge } from "../src/fetch/rendered.ts";
 
 const GUARD = { allowLocalNetworks: true };
 
@@ -22,7 +22,8 @@ describe("firecrawl client", () => {
   it("posts to the scrape endpoint and maps markdown", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (_url: string, init: RequestInit) => {
+      vi.fn(async (url: string, init: RequestInit) => {
+        expect(url).toBe("https://api.firecrawl.dev/v2/scrape"); // cloud default when no base URL is configured
         expect((init.headers as Record<string, string>).authorization).toBe("Bearer fc-key");
         const body = JSON.parse(String(init.body));
         expect(body.formats).toContain("markdown");
@@ -34,6 +35,29 @@ describe("firecrawl client", () => {
     expect(result.provider).toBe("firecrawl");
     expect(result.markdown).toContain("Rendered page");
     expect(result.warning).toMatch(/third-party/); // remote egress caveat
+  });
+
+  it("targets a configured local server, normalizing trailing slashes", async () => {
+    for (const [base, expected] of [
+      ["http://localhost:3002", "http://localhost:3002/v2/scrape"],
+      ["http://localhost:3002/", "http://localhost:3002/v2/scrape"],
+      ["http://localhost:3002///", "http://localhost:3002/v2/scrape"],
+      ["http://127.0.0.1:3002/fc", "http://127.0.0.1:3002/fc/v2/scrape"],
+    ] as const) {
+      const seen: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+          seen.push(url);
+          return Response.json({ data: { markdown: "# ok" } });
+        }),
+      );
+      const result = await renderedFetch("https://example.com", { ...opts, firecrawlBaseUrl: base });
+      expect(result.markdown).toContain("ok");
+      expect(seen).toEqual([expected]);
+    }
+    expect(firecrawlScrapeEndpoint("http://h/")).toBe("http://h/v2/scrape");
+    expect(firecrawlScrapeEndpoint(undefined)).toBe("https://api.firecrawl.dev/v2/scrape");
   });
 
   it("maps 402 to E_QUOTA_EXHAUSTED", async () => {

@@ -9,19 +9,27 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { WebToolsError } from "../errors.ts";
+import { FIRECRAWL_DEFAULT_BASE_URL } from "../config.ts";
 import { extractHtml, lightFetch } from "./light.ts";
 import type { FetchResult } from "../normalize.ts";
 import { assertHostResolvesSafe, parseAndValidateUrl, type UrlGuardOptions } from "../security/urlguard.ts";
 
 export { lightFetch, extractHtml } from "./light.ts";
 
-const FIRECRAWL_URL = "https://api.firecrawl.dev/v2/scrape";
+/** Build the scrape endpoint from a base URL (trailing-slash safe). */
+export function firecrawlScrapeEndpoint(baseUrl?: string): string {
+  const base = (baseUrl?.trim() || FIRECRAWL_DEFAULT_BASE_URL).replace(/\/+$/, "");
+  return `${base}/v2/scrape`;
+}
+
 const FIRECRAWL_CONCURRENCY = 2;
 let firecrawlInFlight = 0;
 
 export interface RenderedFetchOptions extends UrlGuardOptions {
   renderer: "camoufox" | "firecrawl";
   firecrawlApiKey?: string;
+  /** Firecrawl server base URL; defaults to the cloud endpoint. */
+  firecrawlBaseUrl?: string;
   python: string;
   /** Test hook: override the bridge script path. */
   bridgeScript?: string;
@@ -88,7 +96,7 @@ async function firecrawlFetch(rawUrl: string, opts: RenderedFetchOptions): Promi
     const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
     let res: Response;
     try {
-      res = await fetch(FIRECRAWL_URL, {
+      res = await fetch(firecrawlScrapeEndpoint(opts.firecrawlBaseUrl), {
         method: "POST",
         headers: {
           authorization: `Bearer ${opts.firecrawlApiKey}`,
@@ -225,6 +233,7 @@ async function camoufoxFetch(rawUrl: string, opts: RenderedFetchOptions): Promis
 export interface AutoFetchOptions extends UrlGuardOptions {
   renderer: "camoufox" | "firecrawl";
   firecrawlApiKey?: string;
+  firecrawlBaseUrl?: string;
   python: string;
   maxBytes: number;
   timeoutMs: number;

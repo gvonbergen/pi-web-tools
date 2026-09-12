@@ -4,7 +4,11 @@
  * Secret values are never logged; `maskKey` produces operator-safe previews.
  */
 
+import { WebToolsError } from "./errors.ts";
 import { parseAllowedHostsEnv, type ParsedHostPattern } from "./security/hostpatterns.ts";
+
+/** Cloud Firecrawl endpoint; overridable via PI_WEB_TOOLS_FIRECRAWL_BASE_URL. */
+export const FIRECRAWL_DEFAULT_BASE_URL = "https://api.firecrawl.dev";
 
 export type SearchProviderId = "serper" | "brave";
 export type RendererId = "camoufox" | "firecrawl";
@@ -13,6 +17,8 @@ export interface Config {
   serperApiKey?: string;
   braveApiKey?: string;
   firecrawlApiKey?: string;
+  /** Firecrawl server base URL (no trailing slash); the /v2/scrape path is appended by the client. */
+  firecrawlBaseUrl: string;
   /** Operator-selected default search provider. */
   searchProvider?: SearchProviderId;
   /** Operator-selected rendered-fetch engine. */
@@ -28,6 +34,43 @@ export interface Config {
   python: string;
   providerConcurrency: number;
   cacheMaxEntries: number;
+}
+
+/**
+ * Validate PI_WEB_TOOLS_FIRECRAWL_BASE_URL (operator-set Firecrawl server).
+ * Empty/undefined → cloud default. Values are echoed only in redacted form:
+ * a base URL can plausibly carry a key in its query or userinfo.
+ * Throws E_CONFIG (fail closed) on anything that would corrupt the endpoint
+ * join or leak credentials: non-http(s) schemes, userinfo, query, fragment.
+ */
+export function parseFirecrawlBaseUrl(raw: string | undefined): string {
+  const value = raw?.trim();
+  if (!value) return FIRECRAWL_DEFAULT_BASE_URL;
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new WebToolsError("E_CONFIG", "Invalid PI_WEB_TOOLS_FIRECRAWL_BASE_URL: not a valid URL", {
+      hint: `Use an http(s) base URL, e.g. ${FIRECRAWL_DEFAULT_BASE_URL} or http://localhost:3002.`,
+    });
+  }
+  if (parsed.username || parsed.password) {
+    throw new WebToolsError("E_CONFIG", "Invalid PI_WEB_TOOLS_FIRECRAWL_BASE_URL: embedded credentials (user:pass@) are not supported", {
+      hint: "Firecrawl authenticates via the Bearer key (FIRE_CRAWL_API_KEY), not URL userinfo.",
+    });
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new WebToolsError("E_CONFIG", `Invalid PI_WEB_TOOLS_FIRECRAWL_BASE_URL: scheme must be http: or https:, got ${parsed.protocol}`, {
+      hint: `Use an http(s) base URL, e.g. ${FIRECRAWL_DEFAULT_BASE_URL} or http://localhost:3002.`,
+    });
+  }
+  if (parsed.search || parsed.hash) {
+    throw new WebToolsError("E_CONFIG", "Invalid PI_WEB_TOOLS_FIRECRAWL_BASE_URL: query strings and fragments would corrupt the /v2/scrape endpoint join", {
+      hint: "Use a bare base URL without ?query or #fragment.",
+    });
+  }
+  // Strip trailing slashes so `${base}/v2/scrape` never produces `//v2/scrape`.
+  return value.replace(/\/+$/, "");
 }
 
 function intEnv(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
@@ -64,10 +107,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   let renderer: RendererId | undefined;
   if (requestedRenderer === "camoufox" || requestedRenderer === "firecrawl") renderer = requestedRenderer;
 
+  // Throws E_CONFIG on malformed values (fail closed, mirroring the allowlist).
+  const firecrawlBaseUrl = parseFirecrawlBaseUrl(env.PI_WEB_TOOLS_FIRECRAWL_BASE_URL);
+
   return {
     serperApiKey,
     braveApiKey,
     firecrawlApiKey,
+    firecrawlBaseUrl,
     searchProvider,
     renderer,
     rawEnabled: boolEnv(env, "PI_WEB_TOOLS_RAW"),

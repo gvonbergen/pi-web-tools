@@ -182,11 +182,11 @@ export default function piWebTools(pi: ExtensionAPI): void {
               });
             }
           }
-          result = await renderedFetch(args.url, { ...guard, renderer, firecrawlApiKey: config.firecrawlApiKey, python: config.python });
+          result = await renderedFetch(args.url, { ...guard, renderer, firecrawlApiKey: config.firecrawlApiKey, firecrawlBaseUrl: config.firecrawlBaseUrl, python: config.python });
           core.chargeCall(renderer);
         } else {
           const renderer = core.rendererFor(args.renderer);
-          result = await autoFetch(args.url, { ...guard, renderer, firecrawlApiKey: config.firecrawlApiKey, python: config.python });
+          result = await autoFetch(args.url, { ...guard, renderer, firecrawlApiKey: config.firecrawlApiKey, firecrawlBaseUrl: config.firecrawlBaseUrl, python: config.python });
           if (result.tier === "rendered") core.chargeCall(result.provider);
         }
         return {
@@ -262,7 +262,7 @@ export default function piWebTools(pi: ExtensionAPI): void {
         "pi-web-tools status:",
         `  serper:    ${config.serperApiKey ? `enabled (key ${maskKey(config.serperApiKey)})` : "not configured (SERPER_API_KEY)"}`,
         `  brave:     ${config.braveApiKey ? `enabled (key ${maskKey(config.braveApiKey)})` : "not configured (BRAVE_API_KEY)"}`,
-        `  firecrawl: ${config.firecrawlApiKey ? `enabled (key ${maskKey(config.firecrawlApiKey)})` : "not configured (FIRE_CRAWL_API_KEY)"}`,
+        `  firecrawl: ${config.firecrawlApiKey ? `enabled (key ${maskKey(config.firecrawlApiKey)}, endpoint ${config.firecrawlBaseUrl})` : `not configured (FIRE_CRAWL_API_KEY; endpoint ${config.firecrawlBaseUrl})`}`,
         `  camoufox:  ${camoufox ? "available" : "not installed (python bridge probe failed)"}`,
         `  default search provider: ${config.searchProvider ?? "(none — search will error until a key is set)"}`,
         `  default renderer: ${core.rendererFor()}${config.renderer ? " (operator-set)" : ""}`,
