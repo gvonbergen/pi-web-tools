@@ -19,6 +19,15 @@ describe("firecrawl client", () => {
     timeoutMs: 2000,
   };
 
+  it("caps multibyte markdown without splitting a character", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ data: { markdown: "界😀x" } })));
+    const result = await renderedFetch("http://127.0.0.1/", { ...opts, maxBytes: 6 });
+    expect(result.markdown).toBe("界");
+    expect(result.truncated).toBe(true);
+    expect(result.bytes).toBe(8);
+    expect(result.warning).toContain("8 bytes; returning the first 3 bytes");
+  });
+
   it("posts to the scrape endpoint and maps markdown", async () => {
     vi.stubGlobal(
       "fetch",
@@ -113,6 +122,16 @@ describe("tier=auto escalation", () => {
 });
 
 describe("camoufox probe + bridge", () => {
+  it("caps Camoufox extracted output by UTF-8 bytes", async () => {
+    const result = await renderedFetch("http://127.0.0.1/", {
+      ...GUARD, renderer: "camoufox", python: process.execPath,
+      bridgeScript: "test/fixtures/unicode-bridge.cjs", maxBytes: 5, timeoutMs: 2000,
+    });
+    expect(result.markdown).toBe("界");
+    expect(result.truncated).toBe(true);
+    expect(result.warning).toContain("returning the first 3 bytes");
+  });
+
   it("probe returns a boolean without throwing", async () => {
     const ok = await probeCamoufox("python3");
     expect(typeof ok).toBe("boolean");

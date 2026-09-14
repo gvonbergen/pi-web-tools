@@ -33,7 +33,17 @@ function startServer(handler: (req: { url?: string; headers: import("node:http")
 beforeAll(async () => {
   await startServer((req, res) => {
     const path = req.url ?? "/";
-    if (path === "/ok") {
+    if (path === "/unicode") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("界".repeat(90000));
+    } else if (path === "/chunked-bomb") {
+      res.writeHead(200, { "content-type": "text/plain", "content-encoding": "gzip" });
+      res.write(gzipSync(Buffer.alloc(10 * 1024 * 1024)));
+      res.end();
+    } else if (path === "/double-gzip") {
+      res.writeHead(200, { "content-type": "text/plain", "content-encoding": "gzip" });
+      res.end(gzipSync(gzipSync(Buffer.alloc(1536 * 1024))));
+    } else if (path === "/ok") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       res.end(PAGE_HTML);
     } else if (path === "/spa") {
@@ -165,6 +175,23 @@ describe("lightFetch: SPA / rendering hints", () => {
 });
 
 describe("lightFetch: security limits", () => {
+  it("caps Unicode output by UTF-8 bytes", async () => {
+    const { result } = await lightFetch(`${baseUrl}/unicode`, { ...BASE_OPTS, maxBytes: 180001 });
+    expect(result.markdown).toBe("界".repeat(60000));
+    expect(result.truncated).toBe(true);
+    expect(result.warning).toContain("270000 bytes; returning the first 180000 bytes");
+  });
+
+  it("rejects chunked compressed bombs without Content-Length", async () => {
+    await expect(lightFetch(`${baseUrl}/chunked-bomb`, { ...BASE_OPTS, rawBodyMaxBytes: 32 * 1024 * 1024 }))
+      .rejects.toMatchObject({ code: "E_RAW_TOO_LARGE" });
+  });
+
+  it("enforces the absolute cap on nested compression below the ratio floor", async () => {
+    await expect(lightFetch(`${baseUrl}/double-gzip`, BASE_OPTS))
+      .rejects.toMatchObject({ code: "E_RAW_TOO_LARGE" });
+  });
+
   it("blocks redirect chains to private/link-local addresses", async () => {
     // The allowLocalNetworks override exists only so the tests can reach the
     // 127.0.0.1 fixture; it does NOT cascade to redirect targets. Every hop

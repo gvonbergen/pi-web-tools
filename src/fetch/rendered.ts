@@ -5,6 +5,7 @@
  * is available.
  */
 
+import { capContent } from "./content.ts";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -133,15 +134,13 @@ async function firecrawlFetch(rawUrl: string, opts: RenderedFetchOptions): Promi
     const markdown = payload.data?.markdown ?? "";
     const meta = payload.data?.metadata ?? {};
     const egressWarning = "Rendered remotely via Firecrawl: page content was fetched by a third-party service (egress).";
-    const truncated = markdown.length > opts.maxBytes;
-    const truncationWarning = truncated
-      ? `Extracted content is ${markdown.length} bytes; returning the first ${opts.maxBytes} bytes (maxBytes cap). Increase maxBytes to retrieve more.`
-      : undefined;
+    const capped = capContent(markdown, opts.maxBytes);
+    const { truncated, warning: truncationWarning } = capped;
     return {
       url: rawUrl,
       finalUrl: typeof meta.sourceURL === "string" ? meta.sourceURL : rawUrl,
       title: typeof meta.title === "string" ? meta.title : undefined,
-      markdown: markdown.slice(0, opts.maxBytes),
+      markdown: capped.markdown,
       metadata: {
         description: typeof meta.description === "string" ? meta.description : undefined,
         language: typeof meta.language === "string" ? meta.language : undefined,
@@ -150,7 +149,7 @@ async function firecrawlFetch(rawUrl: string, opts: RenderedFetchOptions): Promi
       provider: "firecrawl",
       fetchedAt: new Date().toISOString(),
       truncated,
-      bytes: markdown.length,
+      bytes: capped.bytes,
       warning: truncationWarning ? `${egressWarning} ${truncationWarning}` : egressWarning,
     };
   } finally {
@@ -229,22 +228,21 @@ async function camoufoxFetch(rawUrl: string, opts: RenderedFetchOptions): Promis
     throw new WebToolsError("E_RENDERER_UNAVAILABLE", bridge.error ?? "Camoufox returned no content");
   }
   const extracted = extractHtml(bridge.html, bridge.finalUrl ?? rawUrl);
-  const markdown = extracted.markdown || (bridge.html.length < 2000 ? "```html\n" + bridge.html.slice(0, opts.maxBytes) + "\n```" : "");
-  const truncated = markdown.length > opts.maxBytes;
+  const markdown = extracted.markdown || (bridge.html.length < 2000 ? "```html\n" + bridge.html + "\n```" : "");
+  const capped = capContent(markdown, opts.maxBytes);
+  const { truncated } = capped;
   return {
     url: rawUrl,
     finalUrl: bridge.finalUrl ?? rawUrl,
     title: extracted.title ?? bridge.title,
-    markdown: markdown.slice(0, opts.maxBytes),
+    markdown: capped.markdown,
     metadata: extracted.metadata,
     tier: "rendered",
     provider: "camoufox",
     fetchedAt: new Date().toISOString(),
     truncated,
-    bytes: bridge.html.length,
-    warning: truncated
-      ? `Extracted content is ${markdown.length} bytes; returning the first ${opts.maxBytes} bytes (maxBytes cap). Increase maxBytes to retrieve more.`
-      : undefined,
+    bytes: Buffer.byteLength(bridge.html, "utf8"),
+    warning: capped.warning,
   };
 }
 

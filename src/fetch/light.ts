@@ -6,6 +6,10 @@
  * available, else reported as unsupported.
  */
 
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { Readable } from "node:stream";
+import { capContent } from "./content.ts";
 import { spawn } from "node:child_process";
 import { brotliDecompressSync, gunzipSync, inflateSync, zstdDecompressSync } from "node:zlib";
 import { Readability } from "@mozilla/readability";
@@ -94,6 +98,7 @@ export async function lightFetch(rawUrl: string, opts: LightFetchOptions): Promi
     response = await guardedFetch(current.toString(), opts);
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
+      await response.body?.cancel();
       if (!location) break;
       if (hop === MAX_REDIRECTS) {
         throw new WebToolsError("E_NETWORK", `Too many redirects (>${MAX_REDIRECTS})`);
@@ -112,6 +117,7 @@ export async function lightFetch(rawUrl: string, opts: LightFetchOptions): Promi
   if (!response) throw new WebToolsError("E_NETWORK", "No response received");
 
   if (response.status >= 400) {
+    await response.body?.cancel();
     throw new WebToolsError("E_UPSTREAM", `HTTP ${response.status} fetching ${finalUrl}`);
   }
 
@@ -120,6 +126,7 @@ export async function lightFetch(rawUrl: string, opts: LightFetchOptions): Promi
   const charset = /charset=([\w-]+)/.exec(contentType)?.[1] ?? "utf-8";
 
   if (SKIP_CONTENT_TYPES.some((prefix) => mime.startsWith(prefix))) {
+    await response.body?.cancel();
     throw new WebToolsError("E_UNSUPPORTED_TYPE", `Unsupported content type: ${mime}`, {
       hint: "Light fetch handles text/html, text/*, application/json, xml and PDFs.",
     });
@@ -127,26 +134,22 @@ export async function lightFetch(rawUrl: string, opts: LightFetchOptions): Promi
 
   const contentLength = Number(response.headers.get("content-length") ?? "0");
   if (contentLength > opts.rawBodyMaxBytes) {
+    await response.body?.cancel();
     throw new WebToolsError("E_RAW_TOO_LARGE", `Raw response body of ${contentLength} bytes exceeds the safety cap of ${opts.rawBodyMaxBytes} bytes`, {
       hint: "This safety cap bounds raw response size independently of the maxBytes content cap and cannot be raised per call (operator env: PI_WEB_TOOLS_RAW_BODY_MAX_BYTES).",
     });
   }
 
   const raw = await readBodyCapped(response, opts.rawBodyMaxBytes, opts.signal);
-  // NOTE: undici (node fetch) transparently decompresses gzip/deflate/br/zstd
-  // response bodies; the byte cap applied in readBodyCapped therefore bounds
-  // the DECOMPRESSED stream, which is what protects against decompression
-  // bombs. If an older runtime did not strip the encoding, decompress
-  // manually with the same cap enforced.
   const encoding = (response.headers.get("content-encoding") ?? "identity").toLowerCase();
-  const body = encoding !== "identity" && looksCompressed(raw, encoding) ? decompress(raw, encoding, opts) : raw;
-  // Ratio guard for the transparent-decompression path: when the server sent a
-  // compressed body, content-length (if present) is the compressed size. A
-  // hugely-expanding response is rejected even though it fits under the
-  // absolute safety cap.
-  if (encoding !== "identity" && contentLength > 0) {
-    assertNotBomb(body.byteLength, contentLength, opts);
+  let body = raw;
+  for (const layer of encoding.split(",").map((value) => value.trim()).reverse()) {
+    body = decompress(body, layer, opts);
   }
+  if (encoding !== "identity" && looksCompressed(body, encoding)) {
+    body = decompress(body, encoding, opts);
+  }
+  assertNotBomb(body.byteLength, raw.byteLength, opts);
 
   if (mime === "application/pdf") {
     return await fetchPdf(rawUrl, finalUrl, body, opts);
@@ -179,14 +182,29 @@ async function guardedFetch(url: string, opts: LightFetchOptions): Promise<Respo
   const timeout = AbortSignal.timeout(opts.timeoutMs);
   const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
   try {
-    return await fetch(url, {
-      redirect: "manual", // every hop re-checked by the caller
-      signal,
-      headers: {
-        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36 pi-web-tools/0.1",
-        accept: "text/html,application/xhtml+xml,text/plain,application/json,application/pdf;q=0.9,*/*;q=0.1",
-        "accept-encoding": "gzip, deflate, br, zstd",
-      },
+    return await new Promise<Response>((resolve, reject) => {
+      const request = (new URL(url).protocol === "https:" ? httpsRequest : httpRequest)(url, {
+        signal,
+        headers: {
+          "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36 pi-web-tools/0.1",
+          accept: "text/html,application/xhtml+xml,text/plain,application/json,application/pdf;q=0.9,*/*;q=0.1",
+          "accept-encoding": "gzip, deflate, br, zstd",
+        },
+      }, (incoming) => {
+        const headers = new Headers();
+        for (const [name, value] of Object.entries(incoming.headers)) {
+          if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(", ") : value);
+        }
+        const status = incoming.statusCode ?? 200;
+        if ([204, 205, 304].includes(status)) {
+          incoming.resume();
+          resolve(new Response(null, { status, headers }));
+        } else {
+          resolve(new Response(Readable.toWeb(incoming) as ReadableStream<Uint8Array>, { status, headers }));
+        }
+      });
+      request.on("error", reject);
+      request.end();
     });
   } catch (err) {
     if (opts.signal?.aborted) throw new WebToolsError("E_CANCELLED", "Cancelled");
@@ -240,6 +258,11 @@ function looksCompressed(raw: Uint8Array, encoding: string): boolean {
 
 /** Combined ratio + absolute-size bomb guard (never ratio-only). */
 function assertNotBomb(decompressedBytes: number, compressedBytes: number, opts: LightFetchOptions): void {
+  if (decompressedBytes > opts.rawBodyMaxBytes) {
+    throw new WebToolsError("E_RAW_TOO_LARGE", `Raw decompressed body of ${decompressedBytes} bytes exceeds the safety cap of ${opts.rawBodyMaxBytes} bytes`, {
+      hint: "This safety cap is independent of the per-call maxBytes content cap (operator env: PI_WEB_TOOLS_RAW_BODY_MAX_BYTES).",
+    });
+  }
   if (decompressedBytes <= BOMB_MIN_DECOMPRESSED_BYTES) return;
   if (compressedBytes > 0 && decompressedBytes > BOMB_EXPANSION_RATIO * compressedBytes) {
     throw new WebToolsError(
@@ -248,11 +271,7 @@ function assertNotBomb(decompressedBytes: number, compressedBytes: number, opts:
       { hint: "Highly-compressible oversized payloads are rejected before extraction; this safety check is independent of the maxBytes content cap." },
     );
   }
-  if (decompressedBytes > opts.rawBodyMaxBytes) {
-    throw new WebToolsError("E_RAW_TOO_LARGE", `Raw decompressed body of ${decompressedBytes} bytes exceeds the safety cap of ${opts.rawBodyMaxBytes} bytes`, {
-      hint: "This safety cap is independent of the per-call maxBytes content cap (operator env: PI_WEB_TOOLS_RAW_BODY_MAX_BYTES).",
-    });
-  }
+
 }
 
 function decompress(raw: Uint8Array, encoding: string, opts: LightFetchOptions): Uint8Array {
@@ -260,13 +279,13 @@ function decompress(raw: Uint8Array, encoding: string, opts: LightFetchOptions):
     case "identity":
       return raw;
     case "gzip":
-      return cappedDecompress(() => gunzipSync(raw), raw.byteLength, opts);
+      return cappedDecompress(() => gunzipSync(raw, { maxOutputLength: opts.rawBodyMaxBytes }), raw.byteLength, opts);
     case "deflate":
-      return cappedDecompress(() => inflateSync(raw), raw.byteLength, opts);
+      return cappedDecompress(() => inflateSync(raw, { maxOutputLength: opts.rawBodyMaxBytes }), raw.byteLength, opts);
     case "br":
-      return cappedDecompress(() => brotliDecompressSync(raw), raw.byteLength, opts);
+      return cappedDecompress(() => brotliDecompressSync(raw, { maxOutputLength: opts.rawBodyMaxBytes }), raw.byteLength, opts);
     case "zstd":
-      return cappedDecompress(() => zstdDecompressSync(raw), raw.byteLength, opts);
+      return cappedDecompress(() => zstdDecompressSync(raw, { maxOutputLength: opts.rawBodyMaxBytes }), raw.byteLength, opts);
     default:
       throw new WebToolsError("E_UNSUPPORTED_TYPE", `Unsupported content-encoding: ${encoding}`);
   }
@@ -277,6 +296,9 @@ function cappedDecompress(fn: () => Uint8Array, compressedBytes: number, opts: L
   try {
     out = fn();
   } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ERR_BUFFER_TOO_LARGE") {
+      throw new WebToolsError("E_RAW_TOO_LARGE", "Decompressed response exceeds the raw-response safety cap");
+    }
     throw new WebToolsError("E_UPSTREAM", `decompression failed: ${(err as Error).message}`);
   }
   assertNotBomb(out.byteLength, compressedBytes, opts);
@@ -368,12 +390,8 @@ function finish(
   // returned to the agent — never to the raw response (safety-capped
   // separately, see readBodyCapped/assertNotBomb). Content over the cap is
   // truncated with an actionable warning, not an error.
-  const truncated = fullMarkdown.length > maxBytes;
-  const markdown = truncated ? fullMarkdown.slice(0, maxBytes) : fullMarkdown;
-  if (truncated) {
-    const note = `Extracted content is ${fullMarkdown.length} bytes; returning the first ${maxBytes} bytes (maxBytes cap). Increase maxBytes to retrieve more.`;
-    warning = warning ? `${warning} ${note}` : note;
-  }
+  const { markdown, truncated, warning: note } = capContent(fullMarkdown, maxBytes);
+  if (note) warning = warning ? `${warning} ${note}` : note;
   return {
     url,
     finalUrl,
