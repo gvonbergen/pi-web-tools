@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebToolsError } from "../src/errors.ts";
 import { firecrawlScrapeEndpoint, autoFetch, probeCamoufox, renderedFetch, runCamoufoxBridge } from "../src/fetch/rendered.ts";
 
-const GUARD = { allowLocalNetworks: true };
+const GUARD = { allowLocalNetworks: true, rawBodyMaxBytes: 32 * 1024 * 1024 };
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -18,6 +18,15 @@ describe("firecrawl client", () => {
     maxBytes: 65536,
     timeoutMs: 2000,
   };
+
+  it("caps multibyte markdown without splitting a character", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ data: { markdown: "界😀x" } })));
+    const result = await renderedFetch("http://127.0.0.1/", { ...opts, maxBytes: 6 });
+    expect(result.markdown).toBe("界");
+    expect(result.truncated).toBe(true);
+    expect(result.bytes).toBe(8);
+    expect(result.warning).toContain("8 bytes; returning the first 3 bytes");
+  });
 
   it("posts to the scrape endpoint and maps markdown", async () => {
     vi.stubGlobal(
@@ -113,6 +122,36 @@ describe("tier=auto escalation", () => {
 });
 
 describe("camoufox probe + bridge", () => {
+  it.each([
+    ["escaped", "界".repeat(600)],
+    ["utf8", "界".repeat(600)],
+  ])("accepts HTML within the byte cap over %s JSON transport", async (mode, html) => {
+    const result = await runCamoufoxBridge(mode, {
+      ...GUARD, renderer: "camoufox", python: "python3",
+      bridgeScript: "test/fixtures/size-bridge.py", rawBodyMaxBytes: 2000,
+      maxBytes: 1000, timeoutMs: 2000,
+    });
+    expect(result.html).toBe(html);
+  });
+
+  it.each(["html-overflow", "transport-overflow"])("rejects %s independently", async (mode) => {
+    await expect(runCamoufoxBridge(mode, {
+      ...GUARD, renderer: "camoufox", python: "python3",
+      bridgeScript: "test/fixtures/size-bridge.py", rawBodyMaxBytes: 2000,
+      maxBytes: 1000, timeoutMs: 2000,
+    })).rejects.toMatchObject({ code: "E_RAW_TOO_LARGE" });
+  });
+
+  it("caps Camoufox extracted output by UTF-8 bytes", async () => {
+    const result = await renderedFetch("http://127.0.0.1/", {
+      ...GUARD, renderer: "camoufox", python: process.execPath,
+      bridgeScript: "test/fixtures/unicode-bridge.cjs", maxBytes: 5, timeoutMs: 2000,
+    });
+    expect(result.markdown).toBe("界");
+    expect(result.truncated).toBe(true);
+    expect(result.warning).toContain("returning the first 3 bytes");
+  });
+
   it("probe returns a boolean without throwing", async () => {
     const ok = await probeCamoufox("python3");
     expect(typeof ok).toBe("boolean");
@@ -141,5 +180,44 @@ describe("camoufox probe + bridge", () => {
     const p = runCamoufoxBridge("https://example.com", opts);
     setTimeout(() => controller.abort(), 100);
     await expect(p).rejects.toMatchObject({ code: "E_CANCELLED" });
+  });
+
+  it("bridge output over the raw-response safety cap rejects with E_RAW_TOO_LARGE", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "pwt-test-"));
+    const script = join(dir, "bomb_bridge.py");
+    writeFileSync(script, "import sys\nsys.stdout.write('A' * (7 * 1024 * 1024))\n");
+    const opts = { ...GUARD, renderer: "camoufox" as const, python: "python3", bridgeScript: script, rawBodyMaxBytes: 1024 * 1024, maxBytes: 1000, timeoutMs: 30_000 };
+    await expect(runCamoufoxBridge("https://example.com", opts)).rejects.toMatchObject({ code: "E_RAW_TOO_LARGE" });
+  });
+
+  it("autoFetch does not escalate to the rendered tier on E_RAW_TOO_LARGE", async () => {
+    // A raw-safety overflow from the light tier must rethrow rather than
+    // escalate: the rendered tier would hit the same safety limit.
+    const { createServer } = await import("node:http");
+    const { gzipSync } = await import("node:zlib");
+    const server = createServer((_req, res) => {
+      const bomb = gzipSync(Buffer.alloc(10 * 1024 * 1024, 0));
+      res.writeHead(200, { "content-type": "text/html", "content-encoding": "gzip", "content-length": String(bomb.length) });
+      res.end(bomb);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const addr = server.address() as { port: number };
+    try {
+      await expect(
+        autoFetch(`http://127.0.0.1:${addr.port}/`, {
+          ...GUARD,
+          renderer: "camoufox",
+          python: "python3",
+          rawBodyMaxBytes: 32 * 1024 * 1024,
+          maxBytes: 65536,
+          timeoutMs: 2000,
+        }),
+      ).rejects.toMatchObject({ code: "E_RAW_TOO_LARGE" });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

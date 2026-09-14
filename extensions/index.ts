@@ -158,7 +158,7 @@ export default function piWebTools(pi: ExtensionAPI): void {
       url: Type.String({ description: "http(s) URL to fetch" }),
       tier: Type.Optional(StringEnum(["auto", "light", "rendered"] as const, { default: "auto", description: "Fetch tier" })),
       renderer: Type.Optional(StringEnum(["camoufox", "firecrawl"] as const, { description: "Override configured renderer (rendered tier only)" })),
-      maxBytes: Type.Optional(Type.Number({ default: 2097152, description: "Response size cap in bytes" })),
+      maxBytes: Type.Optional(Type.Number({ default: 2097152, description: "Content cap in bytes, applied to the extracted/cleaned markdown or text returned to you (not the raw response); oversized content is truncated with truncated=true" })),
       timeoutMs: Type.Optional(Type.Number({ default: 30000 })),
       includeRaw: includeRawParam,
     }),
@@ -166,7 +166,7 @@ export default function piWebTools(pi: ExtensionAPI): void {
       if (signal?.aborted) return cancelledResult();
       const maxBytes = args.maxBytes ?? config.fetchMaxBytes;
       const timeoutMs = args.timeoutMs ?? config.timeoutMs;
-      const guard = { allowLocalNetworks: config.allowLocalNetworks, allowedHosts: config.allowedHosts, maxBytes, timeoutMs, signal };
+      const guard = { allowLocalNetworks: config.allowLocalNetworks, allowedHosts: config.allowedHosts, maxBytes, rawBodyMaxBytes: config.rawBodyMaxBytes, timeoutMs, signal };
       try {
         const tier = args.tier ?? "auto";
         let result;

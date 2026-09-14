@@ -5,6 +5,7 @@
  * is available.
  */
 
+import { capContent } from "./content.ts";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -33,7 +34,10 @@ export interface RenderedFetchOptions extends UrlGuardOptions {
   python: string;
   /** Test hook: override the bridge script path. */
   bridgeScript?: string;
+  /** Caller-facing content cap: applies to the extracted/cleaned markdown. */
   maxBytes: number;
+  /** Independent raw-response safety cap (see LightFetchOptions.rawBodyMaxBytes). */
+  rawBodyMaxBytes: number;
   timeoutMs: number;
   signal?: AbortSignal;
 }
@@ -129,11 +133,14 @@ async function firecrawlFetch(rawUrl: string, opts: RenderedFetchOptions): Promi
     const payload = (await res.json()) as { data?: { markdown?: string; metadata?: Record<string, unknown> } };
     const markdown = payload.data?.markdown ?? "";
     const meta = payload.data?.metadata ?? {};
+    const egressWarning = "Rendered remotely via Firecrawl: page content was fetched by a third-party service (egress).";
+    const capped = capContent(markdown, opts.maxBytes);
+    const { truncated, warning: truncationWarning } = capped;
     return {
       url: rawUrl,
       finalUrl: typeof meta.sourceURL === "string" ? meta.sourceURL : rawUrl,
       title: typeof meta.title === "string" ? meta.title : undefined,
-      markdown: markdown.slice(0, opts.maxBytes),
+      markdown: capped.markdown,
       metadata: {
         description: typeof meta.description === "string" ? meta.description : undefined,
         language: typeof meta.language === "string" ? meta.language : undefined,
@@ -141,9 +148,9 @@ async function firecrawlFetch(rawUrl: string, opts: RenderedFetchOptions): Promi
       tier: "rendered",
       provider: "firecrawl",
       fetchedAt: new Date().toISOString(),
-      truncated: markdown.length > opts.maxBytes,
-      bytes: markdown.length,
-      warning: "Rendered remotely via Firecrawl: page content was fetched by a third-party service (egress).",
+      truncated,
+      bytes: capped.bytes,
+      warning: truncationWarning ? `${egressWarning} ${truncationWarning}` : egressWarning,
     };
   } finally {
     firecrawlInFlight--;
@@ -166,7 +173,9 @@ export async function runCamoufoxBridge(url: string, opts: RenderedFetchOptions)
     const child = spawn(opts.python, [bridgeScriptPath(opts)], {
       stdio: ["pipe", "pipe", "pipe"],
     }); // shell-safe arg array; no shell string
-    let out = "";
+    const chunks: Buffer[] = [];
+    let transportBytes = 0;
+    const transportMaxBytes = opts.rawBodyMaxBytes * 6 + 64 * 1024;
     let err = "";
     let settled = false;
 
@@ -183,7 +192,16 @@ export async function runCamoufoxBridge(url: string, opts: RenderedFetchOptions)
       fn();
     };
 
-    child.stdout.on("data", (d) => (out += d.toString()));
+    child.stdout.on("data", (d: Buffer) => {
+      if (settled) return;
+      transportBytes += d.byteLength;
+      if (transportBytes > transportMaxBytes) {
+        child.kill("SIGKILL");
+        finish(() => reject(new WebToolsError("E_RAW_TOO_LARGE", `Rendered bridge JSON exceeds the transport safety cap of ${transportMaxBytes} bytes`)));
+        return;
+      }
+      chunks.push(d);
+    });
     child.stderr.on("data", (d) => (err += d.toString()));
     child.on("error", (e) => finish(() => reject(new WebToolsError("E_RENDERER_UNAVAILABLE", `Camoufox bridge failed to start: ${e.message}`, { hint: `Install: ${opts.python} -m pip install "camoufox[geoip]" && ${opts.python} -m camoufox fetch` }))));
     child.on("close", (code) => {
@@ -194,9 +212,13 @@ export async function runCamoufoxBridge(url: string, opts: RenderedFetchOptions)
         }
         let parsed: CamoufoxBridgeOutput | undefined;
         try {
-          parsed = JSON.parse(out) as CamoufoxBridgeOutput;
+          parsed = JSON.parse(Buffer.concat(chunks, transportBytes).toString("utf8")) as CamoufoxBridgeOutput;
         } catch {
           parsed = undefined;
+        }
+        if (typeof parsed?.html === "string" && Buffer.byteLength(parsed.html, "utf8") > opts.rawBodyMaxBytes) {
+          reject(new WebToolsError("E_RAW_TOO_LARGE", `Rendered page HTML exceeds the raw-response safety cap of ${opts.rawBodyMaxBytes} bytes`, { hint: "This safety cap is independent of the per-call maxBytes content cap (operator env: PI_WEB_TOOLS_RAW_BODY_MAX_BYTES)." }));
+          return;
         }
         if (parsed && parsed.ok) resolve(parsed);
         else reject(new WebToolsError("E_RENDERER_UNAVAILABLE", parsed?.error ?? `Camoufox bridge exited ${code}: ${err.slice(0, 300)}`));
@@ -213,18 +235,21 @@ async function camoufoxFetch(rawUrl: string, opts: RenderedFetchOptions): Promis
     throw new WebToolsError("E_RENDERER_UNAVAILABLE", bridge.error ?? "Camoufox returned no content");
   }
   const extracted = extractHtml(bridge.html, bridge.finalUrl ?? rawUrl);
-  const markdown = extracted.markdown || (bridge.html.length < 2000 ? "```html\n" + bridge.html.slice(0, opts.maxBytes) + "\n```" : "");
+  const markdown = extracted.markdown || (bridge.html.length < 2000 ? "```html\n" + bridge.html + "\n```" : "");
+  const capped = capContent(markdown, opts.maxBytes);
+  const { truncated } = capped;
   return {
     url: rawUrl,
     finalUrl: bridge.finalUrl ?? rawUrl,
     title: extracted.title ?? bridge.title,
-    markdown: markdown.slice(0, opts.maxBytes),
+    markdown: capped.markdown,
     metadata: extracted.metadata,
     tier: "rendered",
     provider: "camoufox",
     fetchedAt: new Date().toISOString(),
-    truncated: markdown.length > opts.maxBytes,
-    bytes: bridge.html.length,
+    truncated,
+    bytes: Buffer.byteLength(bridge.html, "utf8"),
+    warning: capped.warning,
   };
 }
 
@@ -235,6 +260,8 @@ export interface AutoFetchOptions extends UrlGuardOptions {
   firecrawlApiKey?: string;
   firecrawlBaseUrl?: string;
   python: string;
+  /** Independent raw-response safety cap (see LightFetchOptions.rawBodyMaxBytes). */
+  rawBodyMaxBytes: number;
   maxBytes: number;
   timeoutMs: number;
   signal?: AbortSignal;
@@ -253,7 +280,7 @@ export async function autoFetch(rawUrl: string, opts: AutoFetchOptions): Promise
     if (!light.result.needsRendering) return light.result;
     lightResult = light.result;
   } catch (err) {
-    if (err instanceof WebToolsError && (err.code === "E_CANCELLED" || err.code === "E_SSRF_BLOCKED" || err.code === "E_INJECTION_GUARD" || err.code === "E_UNSUPPORTED_TYPE" || err.code === "E_CONTENT_TOO_LARGE")) {
+    if (err instanceof WebToolsError && (err.code === "E_CANCELLED" || err.code === "E_SSRF_BLOCKED" || err.code === "E_INJECTION_GUARD" || err.code === "E_UNSUPPORTED_TYPE" || err.code === "E_CONTENT_TOO_LARGE" || err.code === "E_RAW_TOO_LARGE")) {
       throw err; // safety/unsupported errors must not trigger rendering
     }
     lightResult = undefined; // light failed entirely; try rendered
