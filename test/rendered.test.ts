@@ -122,6 +122,26 @@ describe("tier=auto escalation", () => {
 });
 
 describe("camoufox probe + bridge", () => {
+  it.each([
+    ["escaped", "界".repeat(600)],
+    ["utf8", "界".repeat(600)],
+  ])("accepts HTML within the byte cap over %s JSON transport", async (mode, html) => {
+    const result = await runCamoufoxBridge(mode, {
+      ...GUARD, renderer: "camoufox", python: "python3",
+      bridgeScript: "test/fixtures/size-bridge.py", rawBodyMaxBytes: 2000,
+      maxBytes: 1000, timeoutMs: 2000,
+    });
+    expect(result.html).toBe(html);
+  });
+
+  it.each(["html-overflow", "transport-overflow"])("rejects %s independently", async (mode) => {
+    await expect(runCamoufoxBridge(mode, {
+      ...GUARD, renderer: "camoufox", python: "python3",
+      bridgeScript: "test/fixtures/size-bridge.py", rawBodyMaxBytes: 2000,
+      maxBytes: 1000, timeoutMs: 2000,
+    })).rejects.toMatchObject({ code: "E_RAW_TOO_LARGE" });
+  });
+
   it("caps Camoufox extracted output by UTF-8 bytes", async () => {
     const result = await renderedFetch("http://127.0.0.1/", {
       ...GUARD, renderer: "camoufox", python: process.execPath,
@@ -168,7 +188,7 @@ describe("camoufox probe + bridge", () => {
     const { join } = await import("node:path");
     const dir = mkdtempSync(join(tmpdir(), "pwt-test-"));
     const script = join(dir, "bomb_bridge.py");
-    writeFileSync(script, "import sys\nsys.stdout.write('A' * (2 * 1024 * 1024))\n");
+    writeFileSync(script, "import sys\nsys.stdout.write('A' * (7 * 1024 * 1024))\n");
     const opts = { ...GUARD, renderer: "camoufox" as const, python: "python3", bridgeScript: script, rawBodyMaxBytes: 1024 * 1024, maxBytes: 1000, timeoutMs: 30_000 };
     await expect(runCamoufoxBridge("https://example.com", opts)).rejects.toMatchObject({ code: "E_RAW_TOO_LARGE" });
   });

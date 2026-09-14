@@ -98,8 +98,11 @@ export async function lightFetch(rawUrl: string, opts: LightFetchOptions): Promi
     response = await guardedFetch(current.toString(), opts);
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
+      if (!location) {
+        finalUrl = current.toString();
+        break;
+      }
       await response.body?.cancel();
-      if (!location) break;
       if (hop === MAX_REDIRECTS) {
         throw new WebToolsError("E_NETWORK", `Too many redirects (>${MAX_REDIRECTS})`);
       }

@@ -173,7 +173,9 @@ export async function runCamoufoxBridge(url: string, opts: RenderedFetchOptions)
     const child = spawn(opts.python, [bridgeScriptPath(opts)], {
       stdio: ["pipe", "pipe", "pipe"],
     }); // shell-safe arg array; no shell string
-    let out = "";
+    const chunks: Buffer[] = [];
+    let transportBytes = 0;
+    const transportMaxBytes = opts.rawBodyMaxBytes * 6 + 64 * 1024;
     let err = "";
     let settled = false;
 
@@ -190,14 +192,15 @@ export async function runCamoufoxBridge(url: string, opts: RenderedFetchOptions)
       fn();
     };
 
-    child.stdout.on("data", (d) => {
-      out += d.toString();
-      // Safety cap: the bridge emits the raw rendered HTML; bound it before
-      // it can balloon memory. Independent of maxBytes (content cap).
-      if (out.length > opts.rawBodyMaxBytes) {
+    child.stdout.on("data", (d: Buffer) => {
+      if (settled) return;
+      transportBytes += d.byteLength;
+      if (transportBytes > transportMaxBytes) {
         child.kill("SIGKILL");
-        finish(() => reject(new WebToolsError("E_RAW_TOO_LARGE", `Rendered page HTML exceeds the raw-response safety cap of ${opts.rawBodyMaxBytes} bytes (decompression bomb protection)`, { hint: "This safety cap is independent of the per-call maxBytes content cap (operator env: PI_WEB_TOOLS_RAW_BODY_MAX_BYTES)." })));
+        finish(() => reject(new WebToolsError("E_RAW_TOO_LARGE", `Rendered bridge JSON exceeds the transport safety cap of ${transportMaxBytes} bytes`)));
+        return;
       }
+      chunks.push(d);
     });
     child.stderr.on("data", (d) => (err += d.toString()));
     child.on("error", (e) => finish(() => reject(new WebToolsError("E_RENDERER_UNAVAILABLE", `Camoufox bridge failed to start: ${e.message}`, { hint: `Install: ${opts.python} -m pip install "camoufox[geoip]" && ${opts.python} -m camoufox fetch` }))));
@@ -209,9 +212,13 @@ export async function runCamoufoxBridge(url: string, opts: RenderedFetchOptions)
         }
         let parsed: CamoufoxBridgeOutput | undefined;
         try {
-          parsed = JSON.parse(out) as CamoufoxBridgeOutput;
+          parsed = JSON.parse(Buffer.concat(chunks, transportBytes).toString("utf8")) as CamoufoxBridgeOutput;
         } catch {
           parsed = undefined;
+        }
+        if (typeof parsed?.html === "string" && Buffer.byteLength(parsed.html, "utf8") > opts.rawBodyMaxBytes) {
+          reject(new WebToolsError("E_RAW_TOO_LARGE", `Rendered page HTML exceeds the raw-response safety cap of ${opts.rawBodyMaxBytes} bytes`, { hint: "This safety cap is independent of the per-call maxBytes content cap (operator env: PI_WEB_TOOLS_RAW_BODY_MAX_BYTES)." }));
+          return;
         }
         if (parsed && parsed.ok) resolve(parsed);
         else reject(new WebToolsError("E_RENDERER_UNAVAILABLE", parsed?.error ?? `Camoufox bridge exited ${code}: ${err.slice(0, 300)}`));

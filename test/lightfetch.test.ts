@@ -121,6 +121,9 @@ beforeAll(async () => {
     } else if (path === "/plaintext") {
       res.writeHead(200, { "content-type": "text/plain" });
       res.end("just text");
+    } else if (path === "/choices") {
+      res.writeHead(300, { "content-type": "text/plain" });
+      res.end("Available choices");
     } else if (path === "/error-600") {
       res.writeHead(600);
       res.end("invalid response status");
@@ -178,6 +181,11 @@ describe("lightFetch: SPA / rendering hints", () => {
 });
 
 describe("lightFetch: security limits", () => {
+  it("preserves a 300 response body without Location", async () => {
+    const { result } = await lightFetch(`${baseUrl}/choices`, BASE_OPTS);
+    expect(result.markdown).toContain("Available choices");
+  });
+
   it("rejects invalid upstream response statuses without uncaught exceptions", async () => {
     await expect(lightFetch(`${baseUrl}/error-600`, BASE_OPTS)).rejects.toMatchObject({ code: "E_NETWORK" });
     const { result } = await lightFetch(`${baseUrl}/ok`, BASE_OPTS);
