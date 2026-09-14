@@ -30,6 +30,12 @@ export interface Config {
   /** Explicit SSRF-exception host allowlist (empty by default; see docs/security.md). */
   allowedHosts: ParsedHostPattern[];
   fetchMaxBytes: number;
+  /**
+   * Independent raw-response safety cap (bytes of the raw, decompressed body),
+   * protecting against decompression bombs and unbounded memory use. Deliberately
+   * separate from `fetchMaxBytes`, which caps the extracted/cleaned content.
+   */
+  rawBodyMaxBytes: number;
   timeoutMs: number;
   python: string;
   providerConcurrency: number;
@@ -125,6 +131,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // allowlist entry would either weaken or silently change protection).
     allowedHosts: parseAllowedHostsEnv(env.PI_WEB_TOOLS_ALLOWED_HOSTS),
     fetchMaxBytes: intEnv(env, "PI_WEB_TOOLS_FETCH_MAX_BYTES", 2 * 1024 * 1024),
+    // Decompression-bomb safety layer: independent of the caller-facing
+    // content cap and never derived from it. Floor of 1 MiB (fail closed):
+    // a lower value would neutralize bomb protection for real pages.
+    rawBodyMaxBytes: (() => {
+      const v = intEnv(env, "PI_WEB_TOOLS_RAW_BODY_MAX_BYTES", 32 * 1024 * 1024);
+      if (v < 1024 * 1024) {
+        throw new WebToolsError("E_CONFIG", "PI_WEB_TOOLS_RAW_BODY_MAX_BYTES must be at least 1048576 (1 MiB)", {
+          hint: "This is the raw-response safety cap (decompression-bomb protection), independent of the per-call maxBytes content cap.",
+        });
+      }
+      return v;
+    })(),
     timeoutMs: intEnv(env, "PI_WEB_TOOLS_TIMEOUT_MS", 30_000),
     python: env.PI_WEB_TOOLS_PYTHON?.trim() || "python3",
     providerConcurrency: intEnv(env, "PI_WEB_TOOLS_PROVIDER_CONCURRENCY", 3),

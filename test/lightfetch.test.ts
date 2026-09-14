@@ -6,12 +6,17 @@ import { lightFetch } from "../src/fetch/light.ts";
 import { formatFetchMarkdown } from "../src/registry.ts";
 
 const GUARD = { allowLocalNetworks: true }; // tests talk to 127.0.0.1 directly
-const BASE_OPTS = { ...GUARD, maxBytes: 64 * 1024, timeoutMs: 5000 };
+// Small raw-safety cap so streaming-cap tests stay cheap; raised per-test where
+// the ratio guard must be exercised instead.
+const BASE_OPTS = { ...GUARD, maxBytes: 64 * 1024, rawBodyMaxBytes: 1024 * 1024, timeoutMs: 5000 };
 
 let server: Server;
 let baseUrl: string;
 
 const PAGE_HTML = `<!doctype html><html><head><title>Test Page</title></head><body><article><h1>Hello</h1><p>This is a reasonably long article body with plenty of prose. It contains several sentences of meaningful content so that the readability extraction produces more than the minimum number of characters required before the tool would flag the page as needing JavaScript rendering. Extra filler sentences follow to be safe.</p><p>Second paragraph with additional detail about the topic at hand, ensuring the extracted markdown comfortably exceeds the three-hundred-character minimum content threshold in the light fetch tier.</p></article></body></html>`;
+// SGLang-shaped fixture: markup-heavy raw HTML far above the caller content
+// cap whose cleaned/extracted markdown fits comfortably under it.
+const MARKUP_HEAVY_HTML = `<!doctype html><html><head><title>Docs Page</title></head><body><article><h1>PD Disaggregation</h1><p>${"Meaningful prose about prefill and decode disaggregation across disaggregated prefill instances. ".repeat(12)}</p></article>${`<script>var filler="${"A".repeat(4096)}";</script>`.repeat(120)}</body></html>`;
 const SPA_HTML = `<!doctype html><html><head><title>SPA</title></head><body><div id="root"></div><script>window.__INITIAL_STATE__={}</script></body></html>`;
 
 function startServer(handler: (req: { url?: string; headers: import("node:http").IncomingHttpHeaders }, res: import("node:http").ServerResponse) => void): Promise<void> {
@@ -58,12 +63,34 @@ beforeAll(async () => {
       res.writeHead(302, { location: "ftp://example.com/x" });
       res.end();
     } else if (path === "/huge") {
+      // ~160KB of raw HTML extracting to ~120KB of markdown: over the 64KB
+      // caller content cap, but far under the raw safety cap.
       res.writeHead(200, { "content-type": "text/html", "content-length": String(200 * 1024) });
       res.end(`<!doctype html><html><body>${"<p>filler</p>".repeat(20000)}</body></html>`);
+    } else if (path === "/markup-heavy") {
+      // Raw HTML well above the caller content cap; script payloads are
+      // stripped during sanitization so the extracted markdown fits.
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(MARKUP_HEAVY_HTML);
+    } else if (path === "/raw-overflow") {
+      // Decompressed stream exceeds the raw safety cap (1 MiB in BASE_OPTS).
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(Buffer.alloc(2 * 1024 * 1024, 0x41));
+    } else if (path === "/cl-huge") {
+      res.writeHead(200, { "content-type": "text/html", "content-length": String(5 * 1024 * 1024) });
+      res.end("small body, huge declared length");
     } else if (path === "/gzip-bomb") {
       const bomb = gzipSync(Buffer.alloc(10 * 1024 * 1024, 0));
-      res.writeHead(200, { "content-type": "text/html", "content-encoding": "gzip" });
+      // Explicit compressed content-length so the expansion-ratio guard has a
+      // denominator even when the decompressed stream fits under the cap.
+      res.writeHead(200, { "content-type": "text/html", "content-encoding": "gzip", "content-length": String(bomb.length) });
       res.end(bomb);
+    } else if (path === "/gzip-large-ok") {
+      // Legit compressible page: decompressed ~500 KiB (over the 64KB content
+      // cap, under both the 1 MiB safety cap and the 2 MiB bomb floor).
+      const big = Buffer.from(`<!doctype html><html><head><title>Big</title></head><body><article><p>${"Plain ordinary prose that compresses well but is a perfectly legitimate page. ".repeat(6000)}</p></article></body></html>`);
+      res.writeHead(200, { "content-type": "text/html", "content-encoding": "gzip", "content-length": String(gzipSync(big).length) });
+      res.end(gzipSync(big));
     } else if (path === "/deflate-ok") {
       const body = deflateSync(Buffer.from(PAGE_HTML));
       res.writeHead(200, { "content-type": "text/html", "content-encoding": "deflate" });
@@ -181,12 +208,42 @@ describe("lightFetch: security limits", () => {
     await expect(lightFetch(`${baseUrl}/redirect-loop`, BASE_OPTS)).rejects.toMatchObject({ code: "E_NETWORK" });
   });
 
-  it("enforces the body size cap", async () => {
-    await expect(lightFetch(`${baseUrl}/huge`, BASE_OPTS)).rejects.toMatchObject({ code: "E_CONTENT_TOO_LARGE" });
+  it("extracts markup-heavy raw HTML over the content cap whose cleaned output fits (SGLang shape)", async () => {
+    // Raw HTML (script payload) is far above maxBytes, but the cleaned markdown
+    // is not: the caller cap applies AFTER extraction, not to the raw body.
+    const { result } = await lightFetch(`${baseUrl}/markup-heavy`, BASE_OPTS);
+    expect(result.truncated).toBe(false);
+    expect(result.markdown).toContain("PD Disaggregation");
+    expect(result.markdown.length).toBeLessThan(BASE_OPTS.maxBytes);
+  });
+
+  it("truncates cleaned output exceeding the caller cap with an actionable warning", async () => {
+    const { result } = await lightFetch(`${baseUrl}/huge`, BASE_OPTS);
+    expect(result.truncated).toBe(true);
+    expect(result.markdown.length).toBe(BASE_OPTS.maxBytes);
+    expect(result.warning).toMatch(/maxBytes cap/);
+  });
+
+  it("rejects raw responses over the independent safety cap with E_RAW_TOO_LARGE", async () => {
+    await expect(lightFetch(`${baseUrl}/raw-overflow`, BASE_OPTS)).rejects.toMatchObject({ code: "E_RAW_TOO_LARGE" });
+  });
+
+  it("rejects declared content-length over the safety cap before reading the body", async () => {
+    await expect(lightFetch(`${baseUrl}/cl-huge`, BASE_OPTS)).rejects.toMatchObject({ code: "E_RAW_TOO_LARGE" });
   });
 
   it("blocks gzip decompression bombs", async () => {
-    await expect(lightFetch(`${baseUrl}/gzip-bomb`, BASE_OPTS)).rejects.toMatchObject({ code: "E_CONTENT_TOO_LARGE" });
+    // 10 KiB compressed -> 10 MiB decompressed with a 32 MiB safety cap: the
+    // streaming cap alone would NOT catch it, the expansion-ratio guard does
+    // (decompressed > 2 MiB AND ratio > 100x).
+    const opts = { ...BASE_OPTS, rawBodyMaxBytes: 32 * 1024 * 1024 };
+    await expect(lightFetch(`${baseUrl}/gzip-bomb`, opts)).rejects.toMatchObject({ code: "E_RAW_TOO_LARGE" });
+  });
+
+  it("returns compressed pages larger than the content cap but under the safety caps (truncated)", async () => {
+    const { result } = await lightFetch(`${baseUrl}/gzip-large-ok`, BASE_OPTS);
+    expect(result.truncated).toBe(true);
+    expect(result.markdown).toContain("ordinary prose");
   });
 
   it("gates binary MIME types", async () => {

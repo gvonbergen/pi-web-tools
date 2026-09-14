@@ -17,7 +17,11 @@ export type ErrorCode =
   | "E_TIMEOUT"
   | "E_CANCELLED"
   | "E_SSRF_BLOCKED"
+  // Caller-facing content cap exceeded (applies to extracted/cleaned output).
   | "E_CONTENT_TOO_LARGE"
+  // Raw/decompressed response exceeded the independent safety cap
+  // (decompression-bomb protection); unrelated to the caller's content cap.
+  | "E_RAW_TOO_LARGE"
   | "E_UNSUPPORTED_TYPE"
   | "E_RENDERER_UNAVAILABLE"
   | "E_INJECTION_GUARD"

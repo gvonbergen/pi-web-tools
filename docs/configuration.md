@@ -16,7 +16,8 @@ All configuration is environment-only (no config files in v0.1). Precedence: env
 | `PI_WEB_TOOLS_MAX_CALLS_PER_SESSION` | per-session call budget across providers (`0` = unlimited) | `0` |
 | `PI_WEB_TOOLS_ALLOW_LOCAL_NETWORKS` | `1` allows private/loopback/link-local targets (dev only; disables SSRF blocking) | `0` |
 | `PI_WEB_TOOLS_ALLOWED_HOSTS` | comma-separated host allowlist exempt from SSRF/private-address checks (e.g. `*.v7n.ch,v7n.ch`) | empty (no exceptions) |
-| `PI_WEB_TOOLS_FETCH_MAX_BYTES` | light-fetch body cap | `2097152` (2 MiB) |
+| `PI_WEB_TOOLS_FETCH_MAX_BYTES` | content cap applied to extracted/cleaned markdown or text (per-call `maxBytes` default) | `2097152` (2 MiB) |
+| `PI_WEB_TOOLS_RAW_BODY_MAX_BYTES` | raw/decompressed response safety cap (decompression-bomb protection; independent of the content cap; minimum 1 MiB) | `33554432` (32 MiB) |
 | `PI_WEB_TOOLS_TIMEOUT_MS` | per-request timeout | `30000` |
 | `PI_WEB_TOOLS_PYTHON` | python3 executable for the Camoufox bridge | `python3` |
 | `PI_WEB_TOOLS_PROVIDER_CONCURRENCY` | in-process provider-call semaphore | `3` |

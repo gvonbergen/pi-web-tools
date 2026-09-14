@@ -24,7 +24,7 @@ pi-web-tools fetches untrusted web content and talks to paid third-party APIs. D
 
 ## Resource limits
 
-- **Body cap** (default 2 MiB, configurable): enforced via `content-length` and a streaming byte counter — the response stream is cancelled as soon as the cap is exceeded, so compressed *and* decompressed sizes are bounded (gzip/brotli decompression-bomb protection).
+- **Content cap vs. raw-response safety cap.** The caller-facing `maxBytes` (default 2 MiB, per call or `PI_WEB_TOOLS_FETCH_MAX_BYTES`) bounds the **extracted/cleaned** markdown or text returned to the agent; content over it is truncated (`truncated: true` + warning), not rejected. The **raw response** — compressed or decompressed — is bounded by an independent safety cap (`PI_WEB_TOOLS_RAW_BODY_MAX_BYTES`, default 32 MiB, operator-level, minimum 1 MiB): enforced via `content-length` and a streaming byte counter — the response stream is cancelled as soon as the cap is exceeded, so compressed *and* decompressed sizes are bounded (gzip/brotli decompression-bomb protection). A compressed body that expands more than 100x while exceeding 2 MiB decompressed is also rejected as a probable bomb (ratio guard is always paired with the absolute minimum, so ordinary highly-compressible pages are not false-positived). Raw-safety overflows fail with `E_RAW_TOO_LARGE` before extraction; extracted content over the caller cap never fails the call.
 - **MIME gate:** binary types (`image/*`, `audio/*`, `video/*`, `font/*`, archives, `application/octet-stream`, …) are rejected on the light tier.
 - **Timeouts** on every request; provider retries are bounded (3 tries, jittered exponential backoff, `Retry-After` honored and capped).
 
