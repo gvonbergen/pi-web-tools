@@ -133,7 +133,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     fetchMaxBytes: intEnv(env, "PI_WEB_TOOLS_FETCH_MAX_BYTES", 2 * 1024 * 1024),
     // Decompression-bomb safety layer: independent of the caller-facing
     // content cap and never derived from it. Floor of 1 MiB (fail closed):
-    // a lower value would neutralize bomb protection for real pages.
+    // smaller budgets would reject ordinary pages before extraction.
     rawBodyMaxBytes: (() => {
       const v = intEnv(env, "PI_WEB_TOOLS_RAW_BODY_MAX_BYTES", 32 * 1024 * 1024);
       if (v < 1024 * 1024) {

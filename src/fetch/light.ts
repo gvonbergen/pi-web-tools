@@ -1,6 +1,6 @@
 /**
  * Light fetch tier: native HTTP with SSRF-safe manual redirect handling,
- * streaming size caps (compressed + decompressed), MIME gating, and
+ * transport and decompression size caps, MIME gating, and
  * Readability → DOMPurify → Turndown extraction to markdown.
  * No shell strings anywhere; PDFs are converted via pdftotext (poppler) when
  * available, else reported as unsupported.
@@ -262,7 +262,7 @@ async function readBodyCapped(response: Response, capBytes: number, signal?: Abo
 function looksCompressed(raw: Uint8Array, encoding: string): boolean {
   if (encoding === "gzip") return raw[0] === 0x1f && raw[1] === 0x8b;
   if (encoding === "deflate") return raw[0] === 0x78; // zlib header
-  // br/zstd have no reliable magic; assume already decompressed by undici.
+  // Do not guess an extra br/zstd layer after decoding the declared encodings.
   return false;
 }
 
