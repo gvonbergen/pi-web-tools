@@ -144,10 +144,11 @@ export async function lightFetch(rawUrl: string, opts: LightFetchOptions): Promi
   }
 
   const raw = await readBodyCapped(response, opts.rawBodyMaxBytes, opts.signal);
-  const encoding = (response.headers.get("content-encoding") ?? "identity").toLowerCase();
+  const encodingDeclared = (response.headers.get("content-encoding") ?? "identity").toLowerCase().trim();
+  const encoding = encodingDeclared === "" ? "identity" : encodingDeclared;
   let body = raw;
   if (response.body !== null) {
-    for (const layer of encoding.split(",").map((value) => value.trim()).reverse()) {
+    for (const layer of encoding.split(",").map((value) => value.trim()).filter((value) => value !== "").reverse()) {
       body = decompress(body, layer, opts);
     }
     if (encoding !== "identity" && looksCompressed(body, encoding)) {

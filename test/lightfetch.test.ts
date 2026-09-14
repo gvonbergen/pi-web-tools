@@ -122,6 +122,12 @@ beforeAll(async () => {
     } else if (path === "/double-deflate") {
       res.writeHead(200, { "content-type": "text/html", "content-encoding": "deflate" });
       res.end(deflateSync(deflateSync(Buffer.from(PAGE_HTML))));
+    } else if (path === "/empty-encoding") {
+      res.writeHead(200, { "content-type": "text/plain; charset=utf-8", "content-encoding": "" });
+      res.end("plain text delivered with an empty content-encoding header");
+    } else if (path === "/trailing-comma-encoding") {
+      res.writeHead(200, { "content-type": "text/html", "content-encoding": "gzip, " });
+      res.end(gzipSync(Buffer.from(PAGE_HTML)));
     } else if (path === "/br-ok") {
       const body = brotliCompressSync(Buffer.from(PAGE_HTML));
       res.writeHead(200, { "content-type": "text/html", "content-encoding": "br" });
@@ -209,6 +215,16 @@ describe("lightFetch: happy paths", () => {
 
   it("still unwinds genuine double-deflated responses", async () => {
     const { result } = await lightFetch(`${baseUrl}/double-deflate`, BASE_OPTS);
+    expect(result.markdown).toContain("Hello");
+  });
+
+  it("treats an empty Content-Encoding header as identity", async () => {
+    const { result } = await lightFetch(`${baseUrl}/empty-encoding`, BASE_OPTS);
+    expect(result.markdown).toContain("plain text");
+  });
+
+  it("ignores empty segments in multi-layer Content-Encoding values", async () => {
+    const { result } = await lightFetch(`${baseUrl}/trailing-comma-encoding`, BASE_OPTS);
     expect(result.markdown).toContain("Hello");
   });
 
