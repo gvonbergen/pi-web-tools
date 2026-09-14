@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
-import { gzipSync, brotliCompressSync, deflateSync } from "node:zlib";
+import { gzipSync, brotliCompressSync, deflateRawSync, deflateSync } from "node:zlib";
 import { WebToolsError } from "../src/errors.ts";
 import { lightFetch } from "../src/fetch/light.ts";
 import { formatFetchMarkdown } from "../src/registry.ts";
@@ -109,6 +109,13 @@ beforeAll(async () => {
       const body = deflateSync(Buffer.from(PAGE_HTML));
       res.writeHead(200, { "content-type": "text/html", "content-encoding": "deflate" });
       res.end(body);
+    } else if (path === "/raw-deflate-ok") {
+      const body = deflateRawSync(Buffer.from(PAGE_HTML));
+      res.writeHead(200, { "content-type": "text/html", "content-encoding": "deflate" });
+      res.end(body);
+    } else if (path === "/bad-deflate") {
+      res.writeHead(200, { "content-type": "text/html", "content-encoding": "deflate" });
+      res.end(Buffer.from([0xde, 0xad, 0xbe, 0xef]));
     } else if (path === "/br-ok") {
       const body = brotliCompressSync(Buffer.from(PAGE_HTML));
       res.writeHead(200, { "content-type": "text/html", "content-encoding": "br" });
@@ -178,6 +185,15 @@ describe("lightFetch: happy paths", () => {
     expect(a.result.markdown).toContain("Hello");
     const b = await lightFetch(`${baseUrl}/br-ok`, BASE_OPTS);
     expect(b.result.markdown).toContain("Hello");
+  });
+
+  it("decodes raw DEFLATE streams (RFC 1951) under Content-Encoding: deflate", async () => {
+    const { result } = await lightFetch(`${baseUrl}/raw-deflate-ok`, BASE_OPTS);
+    expect(result.markdown).toContain("Hello");
+  });
+
+  it("still rejects non-deflate garbage under Content-Encoding: deflate", async () => {
+    await expect(lightFetch(`${baseUrl}/bad-deflate`, BASE_OPTS)).rejects.toMatchObject({ code: "E_UPSTREAM" });
   });
 
   it("passes through JSON and plain text", async () => {

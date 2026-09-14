@@ -11,7 +11,7 @@ import { request as httpsRequest } from "node:https";
 import { Readable } from "node:stream";
 import { capContent } from "./content.ts";
 import { spawn } from "node:child_process";
-import { brotliDecompressSync, gunzipSync, inflateSync, zstdDecompressSync } from "node:zlib";
+import { brotliDecompressSync, gunzipSync, inflateRawSync, inflateSync, zstdDecompressSync } from "node:zlib";
 import { Readability } from "@mozilla/readability";
 import DOMPurify from "dompurify";
 import { JSDOM, VirtualConsole } from "jsdom";
@@ -291,7 +291,16 @@ function decompress(raw: Uint8Array, encoding: string, opts: LightFetchOptions):
     case "gzip":
       return cappedDecompress(() => gunzipSync(raw, { maxOutputLength: opts.rawBodyMaxBytes }), raw.byteLength, opts);
     case "deflate":
-      return cappedDecompress(() => inflateSync(raw, { maxOutputLength: opts.rawBodyMaxBytes }), raw.byteLength, opts);
+      return cappedDecompress(() => {
+        try {
+          return inflateSync(raw, { maxOutputLength: opts.rawBodyMaxBytes });
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).message === "incorrect header check") {
+            return inflateRawSync(raw, { maxOutputLength: opts.rawBodyMaxBytes });
+          }
+          throw err;
+        }
+      }, raw.byteLength, opts);
     case "br":
       return cappedDecompress(() => brotliDecompressSync(raw, { maxOutputLength: opts.rawBodyMaxBytes }), raw.byteLength, opts);
     case "zstd":
