@@ -146,11 +146,13 @@ export async function lightFetch(rawUrl: string, opts: LightFetchOptions): Promi
   const raw = await readBodyCapped(response, opts.rawBodyMaxBytes, opts.signal);
   const encoding = (response.headers.get("content-encoding") ?? "identity").toLowerCase();
   let body = raw;
-  for (const layer of encoding.split(",").map((value) => value.trim()).reverse()) {
-    body = decompress(body, layer, opts);
-  }
-  if (encoding !== "identity" && looksCompressed(body, encoding)) {
-    body = decompress(body, encoding, opts);
+  if (response.body !== null) {
+    for (const layer of encoding.split(",").map((value) => value.trim()).reverse()) {
+      body = decompress(body, layer, opts);
+    }
+    if (encoding !== "identity" && looksCompressed(body, encoding)) {
+      body = decompress(body, encoding, opts);
+    }
   }
   assertNotBomb(body.byteLength, raw.byteLength, opts);
 

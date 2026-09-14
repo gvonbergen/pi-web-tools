@@ -33,7 +33,11 @@ function startServer(handler: (req: { url?: string; headers: import("node:http")
 beforeAll(async () => {
   await startServer((req, res) => {
     const path = req.url ?? "/";
-    if (path === "/unicode") {
+    if (path.startsWith("/encoded-empty/")) {
+      const status = Number(path.split("/").pop());
+      res.writeHead(status, { "content-type": "application/json", "content-encoding": "gzip" });
+      res.end();
+    } else if (path === "/unicode") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end("界".repeat(90000));
     } else if (path === "/chunked-bomb") {
@@ -142,6 +146,18 @@ afterAll(async () => {
 });
 
 describe("lightFetch: happy paths", () => {
+  it.each([204, 205, 304])("skips decoding an absent body for HTTP %s", async (status) => {
+    const { result } = await lightFetch(`${baseUrl}/encoded-empty/${status}`, BASE_OPTS);
+    expect(result.markdown).toBe("");
+    expect(result.bytes).toBe(0);
+    expect(result.truncated).toBe(false);
+  });
+
+  it("still rejects an empty gzip body on HTTP 200", async () => {
+    await expect(lightFetch(`${baseUrl}/encoded-empty/200`, BASE_OPTS))
+      .rejects.toMatchObject({ code: "E_UPSTREAM" });
+  });
+
   it("extracts markdown with metadata and provenance", async () => {
     const { result } = await lightFetch(`${baseUrl}/ok`, BASE_OPTS);
     expect(result.tier).toBe("light");
