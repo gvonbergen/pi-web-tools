@@ -116,6 +116,12 @@ beforeAll(async () => {
     } else if (path === "/bad-deflate") {
       res.writeHead(200, { "content-type": "text/html", "content-encoding": "deflate" });
       res.end(Buffer.from([0xde, 0xad, 0xbe, 0xef]));
+    } else if (path === "/deflate-x-leading") {
+      res.writeHead(200, { "content-type": "text/plain; charset=utf-8", "content-encoding": "deflate" });
+      res.end(deflateSync(Buffer.from("xylophone xylophone xylophone sample plain text that starts with the letter x")));
+    } else if (path === "/double-deflate") {
+      res.writeHead(200, { "content-type": "text/html", "content-encoding": "deflate" });
+      res.end(deflateSync(deflateSync(Buffer.from(PAGE_HTML))));
     } else if (path === "/br-ok") {
       const body = brotliCompressSync(Buffer.from(PAGE_HTML));
       res.writeHead(200, { "content-type": "text/html", "content-encoding": "br" });
@@ -194,6 +200,16 @@ describe("lightFetch: happy paths", () => {
 
   it("still rejects non-deflate garbage under Content-Encoding: deflate", async () => {
     await expect(lightFetch(`${baseUrl}/bad-deflate`, BASE_OPTS)).rejects.toMatchObject({ code: "E_UPSTREAM" });
+  });
+
+  it("does not double-decode deflate content whose first byte is 0x78", async () => {
+    const { result } = await lightFetch(`${baseUrl}/deflate-x-leading`, BASE_OPTS);
+    expect(result.markdown).toContain("xylophone");
+  });
+
+  it("still unwinds genuine double-deflated responses", async () => {
+    const { result } = await lightFetch(`${baseUrl}/double-deflate`, BASE_OPTS);
+    expect(result.markdown).toContain("Hello");
   });
 
   it("passes through JSON and plain text", async () => {

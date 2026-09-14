@@ -261,7 +261,8 @@ async function readBodyCapped(response: Response, capBytes: number, signal?: Abo
 
 function looksCompressed(raw: Uint8Array, encoding: string): boolean {
   if (encoding === "gzip") return raw[0] === 0x1f && raw[1] === 0x8b;
-  if (encoding === "deflate") return raw[0] === 0x78; // zlib header
+  // zlib header: CMF 0x78 (deflate, 32K window) with an FCHECK-valid FLG and no preset dictionary.
+  if (encoding === "deflate") return raw[0] === 0x78 && (raw[1] === 0x01 || raw[1] === 0x5e || raw[1] === 0x9c || raw[1] === 0xda);
   // Do not guess an extra br/zstd layer after decoding the declared encodings.
   return false;
 }
