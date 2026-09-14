@@ -191,16 +191,21 @@ async function guardedFetch(url: string, opts: LightFetchOptions): Promise<Respo
           "accept-encoding": "gzip, deflate, br, zstd",
         },
       }, (incoming) => {
-        const headers = new Headers();
-        for (const [name, value] of Object.entries(incoming.headers)) {
-          if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(", ") : value);
-        }
-        const status = incoming.statusCode ?? 200;
-        if ([204, 205, 304].includes(status)) {
-          incoming.resume();
-          resolve(new Response(null, { status, headers }));
-        } else {
-          resolve(new Response(Readable.toWeb(incoming) as ReadableStream<Uint8Array>, { status, headers }));
+        try {
+          const headers = new Headers();
+          for (const [name, value] of Object.entries(incoming.headers)) {
+            if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(", ") : value);
+          }
+          const status = incoming.statusCode ?? 200;
+          if ([204, 205, 304].includes(status)) {
+            incoming.resume();
+            resolve(new Response(null, { status, headers }));
+          } else {
+            resolve(new Response(Readable.toWeb(incoming) as ReadableStream<Uint8Array>, { status, headers }));
+          }
+        } catch (err) {
+          incoming.destroy();
+          reject(err);
         }
       });
       request.on("error", reject);

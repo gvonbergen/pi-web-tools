@@ -1,7 +1,8 @@
 export function capContent(content: string, maxBytes: number) {
   const encoded = Buffer.from(content, "utf8");
-  const truncated = encoded.length > maxBytes;
-  let end = Math.min(encoded.length, maxBytes);
+  const cap = Number.isNaN(maxBytes) ? 0 : Math.max(0, Math.floor(maxBytes));
+  const truncated = encoded.length > cap;
+  let end = Math.min(encoded.length, cap);
   if (truncated) {
     while (end > 0 && (encoded[end]! & 0xc0) === 0x80) end--;
   }

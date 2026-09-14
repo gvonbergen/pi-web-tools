@@ -121,6 +121,9 @@ beforeAll(async () => {
     } else if (path === "/plaintext") {
       res.writeHead(200, { "content-type": "text/plain" });
       res.end("just text");
+    } else if (path === "/error-600") {
+      res.writeHead(600);
+      res.end("invalid response status");
     } else if (path === "/error-500") {
       res.writeHead(500);
       res.end("server error");
@@ -175,6 +178,12 @@ describe("lightFetch: SPA / rendering hints", () => {
 });
 
 describe("lightFetch: security limits", () => {
+  it("rejects invalid upstream response statuses without uncaught exceptions", async () => {
+    await expect(lightFetch(`${baseUrl}/error-600`, BASE_OPTS)).rejects.toMatchObject({ code: "E_NETWORK" });
+    const { result } = await lightFetch(`${baseUrl}/ok`, BASE_OPTS);
+    expect(result.markdown).toContain("Hello");
+  });
+
   it("caps Unicode output by UTF-8 bytes", async () => {
     const { result } = await lightFetch(`${baseUrl}/unicode`, { ...BASE_OPTS, maxBytes: 180001 });
     expect(result.markdown).toBe("界".repeat(60000));
