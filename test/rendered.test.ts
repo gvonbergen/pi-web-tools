@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebToolsError } from "../src/errors.ts";
-import { firecrawlScrapeEndpoint, autoFetch, probeCamoufox, renderedFetch, runCamoufoxBridge } from "../src/fetch/rendered.ts";
+import { firecrawlScrapeEndpoint, isCustomFirecrawlEndpoint, autoFetch, probeCamoufox, renderedFetch, runCamoufoxBridge } from "../src/fetch/rendered.ts";
 
 const GUARD = { allowLocalNetworks: true, rawBodyMaxBytes: 32 * 1024 * 1024 };
 
@@ -98,6 +98,19 @@ describe("firecrawl client", () => {
     await expect(renderedFetch("https://example.com", { ...opts, firecrawlApiKey: undefined })).rejects.toMatchObject({ code: "E_RENDERER_UNAVAILABLE" });
     await expect(
       renderedFetch("https://example.com", { ...opts, firecrawlApiKey: undefined, firecrawlBaseUrl: "https://api.firecrawl.dev/" }),
+    ).rejects.toMatchObject({ code: "E_RENDERER_UNAVAILABLE" });
+  });
+
+  it("treats mixed-case cloud base URL as hosted (still requires a key)", async () => {
+    expect(isCustomFirecrawlEndpoint("https://API.FIRECRAWL.DEV")).toBe(false);
+    expect(isCustomFirecrawlEndpoint("https://Api.Firecrawl.dev")).toBe(false);
+    expect(isCustomFirecrawlEndpoint("https://api.firecrawl.dev:443")).toBe(false);
+    expect(isCustomFirecrawlEndpoint("http://api.firecrawl.dev")).toBe(true); // different scheme is not the cloud endpoint
+    expect(isCustomFirecrawlEndpoint("http://localhost:3002")).toBe(true);
+    expect(isCustomFirecrawlEndpoint(undefined)).toBe(false);
+    expect(isCustomFirecrawlEndpoint("")).toBe(false);
+    await expect(
+      renderedFetch("https://example.com", { ...opts, firecrawlApiKey: undefined, firecrawlBaseUrl: "https://API.FIRECRAWL.DEV" }),
     ).rejects.toMatchObject({ code: "E_RENDERER_UNAVAILABLE" });
   });
 

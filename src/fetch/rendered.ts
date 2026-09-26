@@ -32,7 +32,13 @@ export function firecrawlScrapeEndpoint(baseUrl?: string): string {
 export function isCustomFirecrawlEndpoint(baseUrl?: string): boolean {
   const base = baseUrl?.trim();
   if (!base) return false;
-  return base.replace(/\/+$/, "") !== FIRECRAWL_DEFAULT_BASE_URL;
+  try {
+    const u = new URL(base.replace(/\/+$/, ""));
+    const def = new URL(FIRECRAWL_DEFAULT_BASE_URL);
+    return u.host !== def.host || u.protocol !== def.protocol;
+  } catch {
+    return true;
+  }
 }
 
 const FIRECRAWL_CONCURRENCY = 2;
