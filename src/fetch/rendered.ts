@@ -34,8 +34,7 @@ export function isCustomFirecrawlEndpoint(baseUrl?: string): boolean {
   if (!base) return false;
   try {
     const u = new URL(base.replace(/\/+$/, ""));
-    const def = new URL(FIRECRAWL_DEFAULT_BASE_URL);
-    return u.host !== def.host || u.protocol !== def.protocol;
+    return u.host !== new URL(FIRECRAWL_DEFAULT_BASE_URL).host;
   } catch {
     return true;
   }

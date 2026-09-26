@@ -101,16 +101,20 @@ describe("firecrawl client", () => {
     ).rejects.toMatchObject({ code: "E_RENDERER_UNAVAILABLE" });
   });
 
-  it("treats mixed-case cloud base URL as hosted (still requires a key)", async () => {
+  it("treats cloud host variants as hosted regardless of scheme or case (still requires a key)", async () => {
     expect(isCustomFirecrawlEndpoint("https://API.FIRECRAWL.DEV")).toBe(false);
     expect(isCustomFirecrawlEndpoint("https://Api.Firecrawl.dev")).toBe(false);
     expect(isCustomFirecrawlEndpoint("https://api.firecrawl.dev:443")).toBe(false);
-    expect(isCustomFirecrawlEndpoint("http://api.firecrawl.dev")).toBe(true); // different scheme is not the cloud endpoint
+    expect(isCustomFirecrawlEndpoint("http://api.firecrawl.dev")).toBe(false);
+    expect(isCustomFirecrawlEndpoint("http://API.FIRECRAWL.DEV")).toBe(false);
     expect(isCustomFirecrawlEndpoint("http://localhost:3002")).toBe(true);
     expect(isCustomFirecrawlEndpoint(undefined)).toBe(false);
     expect(isCustomFirecrawlEndpoint("")).toBe(false);
     await expect(
       renderedFetch("https://example.com", { ...opts, firecrawlApiKey: undefined, firecrawlBaseUrl: "https://API.FIRECRAWL.DEV" }),
+    ).rejects.toMatchObject({ code: "E_RENDERER_UNAVAILABLE" });
+    await expect(
+      renderedFetch("https://example.com", { ...opts, firecrawlApiKey: undefined, firecrawlBaseUrl: "http://api.firecrawl.dev" }),
     ).rejects.toMatchObject({ code: "E_RENDERER_UNAVAILABLE" });
   });
 
