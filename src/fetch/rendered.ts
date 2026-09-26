@@ -23,6 +23,18 @@ export function firecrawlScrapeEndpoint(baseUrl?: string): string {
   return `${base}/v2/scrape`;
 }
 
+/**
+ * True when the operator pointed the renderer at a non-cloud Firecrawl server
+ * (e.g. a self-hosted instance), which commonly runs without authentication.
+ * The cloud endpoint keeps its credential requirement; an explicit override
+ * back to the cloud URL counts as hosted, not custom.
+ */
+export function isCustomFirecrawlEndpoint(baseUrl?: string): boolean {
+  const base = baseUrl?.trim();
+  if (!base) return false;
+  return base.replace(/\/+$/, "") !== FIRECRAWL_DEFAULT_BASE_URL;
+}
+
 const FIRECRAWL_CONCURRENCY = 2;
 let firecrawlInFlight = 0;
 
@@ -77,9 +89,11 @@ export async function renderedFetch(rawUrl: string, opts: RenderedFetchOptions):
   await assertHostResolvesSafe(url, opts);
 
   if (opts.renderer === "firecrawl") {
-    if (!opts.firecrawlApiKey) {
+    if (!opts.firecrawlApiKey && !isCustomFirecrawlEndpoint(opts.firecrawlBaseUrl)) {
+      // Hosted (cloud) Firecrawl requires a key. Self-hosted servers pointed at
+      // via PI_WEB_TOOLS_FIRECRAWL_BASE_URL often run keyless, so they are exempt.
       throw new WebToolsError("E_RENDERER_UNAVAILABLE", "Firecrawl renderer selected but FIRE_CRAWL_API_KEY is not set", {
-        hint: "Set FIRE_CRAWL_API_KEY or switch PI_WEB_TOOLS_RENDERER=camoufox.",
+        hint: "Set FIRE_CRAWL_API_KEY, point PI_WEB_TOOLS_FIRECRAWL_BASE_URL at a self-hosted server, or switch PI_WEB_TOOLS_RENDERER=camoufox.",
       });
     }
     return firecrawlFetch(rawUrl, opts);
@@ -87,7 +101,7 @@ export async function renderedFetch(rawUrl: string, opts: RenderedFetchOptions):
   return camoufoxFetch(rawUrl, opts);
 }
 
-// ─── Firecrawl (remote, paid) ────────────────────────────────────────────────
+// ─── Firecrawl (remote; cloud paid, self-hosted often free) ─────────────────
 
 async function firecrawlFetch(rawUrl: string, opts: RenderedFetchOptions): Promise<FetchResult> {
   if (firecrawlInFlight >= FIRECRAWL_CONCURRENCY) {
@@ -103,7 +117,9 @@ async function firecrawlFetch(rawUrl: string, opts: RenderedFetchOptions): Promi
       res = await fetch(firecrawlScrapeEndpoint(opts.firecrawlBaseUrl), {
         method: "POST",
         headers: {
-          authorization: `Bearer ${opts.firecrawlApiKey}`,
+          // Keyless self-hosted servers must not receive an empty/invalid
+          // Authorization header — omit it entirely when no key is configured.
+          ...(opts.firecrawlApiKey ? { authorization: `Bearer ${opts.firecrawlApiKey}` } : {}),
           "content-type": "application/json",
         },
         body: JSON.stringify({ url: rawUrl, formats: ["markdown"] }),

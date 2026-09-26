@@ -11,7 +11,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { loadConfig, maskKey } from "../src/config.ts";
 import { describeError, WebToolsError } from "../src/errors.ts";
-import { autoFetch, lightFetch, probeCamoufox, renderedFetch } from "../src/fetch/rendered.ts";
+import { autoFetch, isCustomFirecrawlEndpoint, lightFetch, probeCamoufox, renderedFetch } from "../src/fetch/rendered.ts";
 import { formatFetchMarkdown, formatPlacesMarkdown, formatSearchMarkdown, WebToolsCore } from "../src/registry.ts";
 import { StringEnum } from "../src/stringenum.ts";
 import type { SearchKind } from "../src/providers/types.ts";
@@ -176,9 +176,9 @@ export default function piWebTools(pi: ExtensionAPI): void {
           const renderer = core.rendererFor(args.renderer);
           if (renderer === "camoufox") {
             camoufoxAvailable ??= await probeCamoufox(config.python);
-            if (!camoufoxAvailable && !config.firecrawlApiKey) {
-              throw new WebToolsError("E_RENDERER_UNAVAILABLE", "Camoufox is not installed and no Firecrawl key is configured", {
-                hint: 'Install camoufox: pip install "camoufox[geoip]" && python -m camoufox fetch — or set FIRE_CRAWL_API_KEY and PI_WEB_TOOLS_RENDERER=firecrawl.',
+            if (!camoufoxAvailable && !config.firecrawlApiKey && !isCustomFirecrawlEndpoint(config.firecrawlBaseUrl)) {
+              throw new WebToolsError("E_RENDERER_UNAVAILABLE", "Camoufox is not installed and no Firecrawl renderer is configured", {
+                hint: 'Install camoufox: pip install "camoufox[geoip]" && python -m camoufox fetch — or set PI_WEB_TOOLS_RENDERER=firecrawl with FIRE_CRAWL_API_KEY (cloud) or PI_WEB_TOOLS_FIRECRAWL_BASE_URL (keyless self-hosted server).',
               });
             }
           }
@@ -262,7 +262,7 @@ export default function piWebTools(pi: ExtensionAPI): void {
         "pi-web-tools status:",
         `  serper:    ${config.serperApiKey ? `enabled (key ${maskKey(config.serperApiKey)})` : "not configured (SERPER_API_KEY)"}`,
         `  brave:     ${config.braveApiKey ? `enabled (key ${maskKey(config.braveApiKey)})` : "not configured (BRAVE_API_KEY)"}`,
-        `  firecrawl: ${config.firecrawlApiKey ? `enabled (key ${maskKey(config.firecrawlApiKey)}, endpoint ${config.firecrawlBaseUrl})` : `not configured (FIRE_CRAWL_API_KEY; endpoint ${config.firecrawlBaseUrl})`}`,
+        `  firecrawl: ${config.firecrawlApiKey ? `enabled (key ${maskKey(config.firecrawlApiKey)}, endpoint ${config.firecrawlBaseUrl})` : isCustomFirecrawlEndpoint(config.firecrawlBaseUrl) ? `enabled keyless (self-hosted endpoint ${config.firecrawlBaseUrl})` : `not configured (FIRE_CRAWL_API_KEY; endpoint ${config.firecrawlBaseUrl})`}`,
         `  camoufox:  ${camoufox ? "available" : "not installed (python bridge probe failed)"}`,
         `  default search provider: ${config.searchProvider ?? "(none — search will error until a key is set)"}`,
         `  default renderer: ${core.rendererFor()}${config.renderer ? " (operator-set)" : ""}`,

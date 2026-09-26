@@ -79,7 +79,41 @@ describe("firecrawl client", () => {
     await expect(renderedFetch("https://example.com", opts)).rejects.toMatchObject({ code: "E_RATE_LIMIT" });
   });
 
-  it("throws E_RENDERER_UNAVAILABLE without a key", async () => {
+  it("allows a keyless request against a custom (self-hosted) endpoint and omits the Authorization header", async () => {
+    const seen: Array<Record<string, string>> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        seen.push(init.headers as Record<string, string>);
+        return Response.json({ data: { markdown: "# keyless ok" } });
+      }),
+    );
+    const result = await renderedFetch("https://example.com", { ...opts, firecrawlApiKey: undefined, firecrawlBaseUrl: "http://localhost:3002" });
+    expect(result.markdown).toContain("keyless ok");
+    expect(seen).toHaveLength(1);
+    expect(Object.keys(seen[0]!)).not.toContain("authorization"); // no empty/invalid auth header for keyless servers
+  });
+
+  it("still requires a key for the hosted cloud endpoint, even when an explicit base URL points back at the cloud", async () => {
+    await expect(renderedFetch("https://example.com", { ...opts, firecrawlApiKey: undefined })).rejects.toMatchObject({ code: "E_RENDERER_UNAVAILABLE" });
+    await expect(
+      renderedFetch("https://example.com", { ...opts, firecrawlApiKey: undefined, firecrawlBaseUrl: "https://api.firecrawl.dev/" }),
+    ).rejects.toMatchObject({ code: "E_RENDERER_UNAVAILABLE" });
+  });
+
+  it("sends a Bearer key to a custom endpoint when one is configured", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        expect((init.headers as Record<string, string>).authorization).toBe("Bearer fc-key");
+        return Response.json({ data: { markdown: "# keyed ok" } });
+      }),
+    );
+    const result = await renderedFetch("https://example.com", { ...opts, firecrawlBaseUrl: "http://localhost:3002" });
+    expect(result.markdown).toContain("keyed ok");
+  });
+
+  it("throws E_RENDERER_UNAVAILABLE without a key on the cloud default", async () => {
     await expect(renderedFetch("https://example.com", { ...opts, firecrawlApiKey: undefined })).rejects.toMatchObject({ code: "E_RENDERER_UNAVAILABLE" });
   });
 
