@@ -51,7 +51,7 @@ Serper uses the Google places pack (stable `cid` ids). Brave uses web-search loc
 
 - **`tier=light`** — plain HTTP: SSRF guard, ≤5 redirects with per-hop re-check, MIME gating, Readability → DOMPurify → Turndown extraction to markdown. Optional pdftotext (poppler) for PDFs. Named hosts whose DNS deliberately resolves into private space can be exempted via `PI_WEB_TOOLS_ALLOWED_HOSTS` (per-host opt-in, empty by default — see [docs/security.md](docs/security.md)).
   - *Migration note:* previously the caller cap applied to the raw decompressed body; it now applies to the extracted markdown. Calls that previously failed with `E_CONTENT_TOO_LARGE` on markup-heavy pages now succeed; raw-response protection moved to the independent safety cap (`E_RAW_TOO_LARGE`).
-- **`tier=rendered`** — JavaScript-heavy pages. Default renderer: **Camoufox** (local, free; captain decision D2). Firecrawl (remote) is available via `PI_WEB_TOOLS_RENDERER=firecrawl` or per-call `renderer` override: point it at a self-hosted server with `PI_WEB_TOOLS_FIRECRAWL_BASE_URL` (e.g. `http://localhost:3002`, no API key needed), or use the paid cloud endpoint `https://api.firecrawl.dev` with `FIRE_CRAWL_API_KEY`. Firecrawl is **never** used as a silent fallback.
+- **`tier=rendered`** — JavaScript-heavy pages. Default renderer: **Camoufox** (local, free; captain decision D2). Firecrawl (remote) is available via `PI_WEB_TOOLS_RENDERER=firecrawl` or per-call `renderer` override: point it at a self-hosted server with `PI_WEB_TOOLS_FIRECRAWL_BASE_URL` (e.g. `http://localhost:3002`, no API key needed), or use the paid cloud host `api.firecrawl.dev` with `FIRE_CRAWL_API_KEY`. Cloud-host variants still require a key. Firecrawl is **never** used as a silent fallback.
 - **`tier=auto`** — runs light; if the page looks like a JS shell it escalates to rendered **at most once**. If no renderer is available, the light result is returned with `renderingUnavailable: true` instead of failing.
 
 Fetched page content is always wrapped with an explicit *untrusted data* label so the model treats it as data, not instructions.
@@ -66,12 +66,12 @@ export BRAVE_API_KEY=...         # https://brave.com/search/api
 # rendered fetch (optional)
 pip install "camoufox[geoip]" && python -m camoufox fetch   # local renderer
 export PI_WEB_TOOLS_FIRECRAWL_BASE_URL=http://localhost:3002   # or the remote renderer (self-hosted; no key needed)
-export FIRE_CRAWL_API_KEY=...                                  # only for the paid cloud endpoint (api.firecrawl.dev)
+export FIRE_CRAWL_API_KEY=...                                  # only for the paid cloud host (api.firecrawl.dev)
 ```
 
 ## Status command
 
-`/web-tools-status` shows which providers/renderers are enabled (keys masked), the default provider/renderer, cache size, and per-session call counters.
+`/web-tools-status` shows which providers/renderers are enabled (keys masked), the default provider/renderer, cache size, and per-session call counters. For Firecrawl, it reports `enabled keyless (self-hosted endpoint ...)` when a non-cloud base URL is configured without `FIRE_CRAWL_API_KEY`, `enabled (key ..., endpoint ...)` when a key is configured, and `not configured (FIRE_CRAWL_API_KEY; endpoint ...)` when the cloud host is selected without a key.
 
 ## Configuration
 
