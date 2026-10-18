@@ -29,11 +29,11 @@ export interface Config {
   allowLocalNetworks: boolean;
   /** Explicit SSRF-exception host allowlist (empty by default; see docs/security.md). */
   allowedHosts: ParsedHostPattern[];
-  fetchMaxBytes: number;
+  fetchMaxChars: number;
   /**
    * Independent raw-response safety cap (bytes of the raw, decompressed body),
    * protecting against decompression bombs and unbounded memory use. Deliberately
-   * separate from `fetchMaxBytes`, which caps the extracted/cleaned content.
+   * separate from `fetchMaxChars`, which caps the extracted/cleaned content.
    */
   rawBodyMaxBytes: number;
   timeoutMs: number;
@@ -130,7 +130,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // Throws E_CONFIG on malformed entries (fail closed — a silently-dropped
     // allowlist entry would either weaken or silently change protection).
     allowedHosts: parseAllowedHostsEnv(env.PI_WEB_TOOLS_ALLOWED_HOSTS),
-    fetchMaxBytes: intEnv(env, "PI_WEB_TOOLS_FETCH_MAX_BYTES", 2 * 1024 * 1024),
+    // Default for the per-call maxChars content cap (characters of the
+    // extracted/cleaned content returned to the agent). PI_WEB_TOOLS_FETCH_MAX_BYTES
+    // is a deprecated alias kept for backward compatibility.
+    fetchMaxChars: intEnv(env, "PI_WEB_TOOLS_FETCH_MAX_CHARS", intEnv(env, "PI_WEB_TOOLS_FETCH_MAX_BYTES", 2 * 1024 * 1024)),
     // Decompression-bomb safety layer: independent of the caller-facing
     // content cap and never derived from it. Floor of 1 MiB (fail closed):
     // smaller budgets would reject ordinary pages before extraction.
@@ -138,7 +141,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       const v = intEnv(env, "PI_WEB_TOOLS_RAW_BODY_MAX_BYTES", 32 * 1024 * 1024);
       if (v < 1024 * 1024) {
         throw new WebToolsError("E_CONFIG", "PI_WEB_TOOLS_RAW_BODY_MAX_BYTES must be at least 1048576 (1 MiB)", {
-          hint: "This is the raw-response safety cap (decompression-bomb protection), independent of the per-call maxBytes content cap.",
+          hint: "This is the raw-response safety cap (decompression-bomb protection), independent of the per-call maxChars content cap.",
         });
       }
       return v;

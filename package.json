@@ -1,6 +1,6 @@
 {
   "name": "pi-web-tools",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Pi extension: provider-neutral web/news/image/video/places search (Serper.dev + Brave) and tiered web_fetch (light HTTP + rendered via Camoufox/Firecrawl).",
   "type": "module",
   "keywords": [

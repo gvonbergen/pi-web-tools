@@ -24,7 +24,7 @@ pi-web-tools fetches untrusted web content and talks to paid third-party APIs. D
 
 ## Resource limits
 
-- **Content cap:** see [`maxBytes` usage](../README.md#web_fetch) for output truncation, separate from the safety limits below.
+- **Content cap:** see [`maxChars` usage](../README.md#web_fetch) for output truncation, separate from the safety limits below.
 - **Raw-response safety cap:** `PI_WEB_TOOLS_RAW_BODY_MAX_BYTES` is operator-controlled; its default and minimum are in [configuration](configuration.md). The light tier checks `Content-Length` and counts actual transport bytes while reading, cancelling the stream when the cap is exceeded. Each content-decoding layer has a bounded decompression output. The expansion guard uses measured bytes, including for chunked responses without `Content-Length`: expansion over 100x is rejected only when decompressed size also exceeds 2 MiB. The absolute cap applies regardless of that threshold. These failures return `E_RAW_TOO_LARGE` before extraction and do not trigger automatic escalation from light to rendered.
 - **Rendered scope:** Camoufox checks the decoded HTML's UTF-8 byte size before extraction, with a separate bounded allowance for bridge JSON escaping and metadata (see `runCamoufoxBridge` in `src/fetch/rendered.ts`). This does not bound browser network traffic or browser memory. Firecrawl applies the output content cap but does not enforce this local raw-response safety cap on its API response.
 - **MIME gate:** binary types (`image/*`, `audio/*`, `video/*`, `font/*`, archives, `application/octet-stream`, …) are rejected on the light tier.

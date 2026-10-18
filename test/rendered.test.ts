@@ -15,17 +15,17 @@ describe("firecrawl client", () => {
     bridgeScript: undefined as string | undefined,
     firecrawlApiKey: "fc-key",
     python: "python3",
-    maxBytes: 65536,
+    maxChars: 65536,
     timeoutMs: 2000,
   };
 
   it("caps multibyte markdown without splitting a character", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ data: { markdown: "界😀x" } })));
-    const result = await renderedFetch("http://127.0.0.1/", { ...opts, maxBytes: 6 });
-    expect(result.markdown).toBe("界");
+    const result = await renderedFetch("http://127.0.0.1/", { ...opts, maxChars: 2 });
+    expect(result.markdown).toBe("界😀");
     expect(result.truncated).toBe(true);
     expect(result.bytes).toBe(8);
-    expect(result.warning).toContain("8 bytes; returning the first 3 bytes");
+    expect(result.warning).toContain("3 characters; returning the first 2 characters");
   });
 
   it("posts to the scrape endpoint and maps markdown", async () => {
@@ -154,7 +154,7 @@ describe("tier=auto escalation", () => {
         ...GUARD,
         renderer: "camoufox",
         python: "definitely-not-a-real-python-binary",
-        maxBytes: 65536,
+        maxChars: 65536,
         timeoutMs: 2000,
       });
       expect(result.tier).toBe("light");
@@ -167,7 +167,7 @@ describe("tier=auto escalation", () => {
 
   it("does not escalate on SSRF/unsupported errors", async () => {
     await expect(
-      autoFetch("file:///etc/passwd", { ...GUARD, renderer: "firecrawl", firecrawlApiKey: "k", python: "python3", maxBytes: 1000, timeoutMs: 1000 }),
+      autoFetch("file:///etc/passwd", { ...GUARD, renderer: "firecrawl", firecrawlApiKey: "k", python: "python3", maxChars: 1000, timeoutMs: 1000 }),
     ).rejects.toMatchObject({ code: "E_INJECTION_GUARD" });
   });
 });
@@ -180,7 +180,7 @@ describe("camoufox probe + bridge", () => {
     const result = await runCamoufoxBridge(mode, {
       ...GUARD, renderer: "camoufox", python: "python3",
       bridgeScript: "test/fixtures/size-bridge.py", rawBodyMaxBytes: 2000,
-      maxBytes: 1000, timeoutMs: 2000,
+      maxChars: 1000, timeoutMs: 2000,
     });
     expect(result.html).toBe(html);
   });
@@ -189,18 +189,18 @@ describe("camoufox probe + bridge", () => {
     await expect(runCamoufoxBridge(mode, {
       ...GUARD, renderer: "camoufox", python: "python3",
       bridgeScript: "test/fixtures/size-bridge.py", rawBodyMaxBytes: 2000,
-      maxBytes: 1000, timeoutMs: 2000,
+      maxChars: 1000, timeoutMs: 2000,
     })).rejects.toMatchObject({ code: "E_RAW_TOO_LARGE" });
   });
 
-  it("caps Camoufox extracted output by UTF-8 bytes", async () => {
+  it("caps Camoufox extracted output by characters", async () => {
     const result = await renderedFetch("http://127.0.0.1/", {
       ...GUARD, renderer: "camoufox", python: process.execPath,
-      bridgeScript: "test/fixtures/unicode-bridge.cjs", maxBytes: 5, timeoutMs: 2000,
+      bridgeScript: "test/fixtures/unicode-bridge.cjs", maxChars: 2, timeoutMs: 2000,
     });
-    expect(result.markdown).toBe("界");
+    expect(result.markdown).toBe("界😀");
     expect(result.truncated).toBe(true);
-    expect(result.warning).toContain("returning the first 3 bytes");
+    expect(result.warning).toContain("returning the first 2 characters");
   });
 
   it("probe returns a boolean without throwing", async () => {
@@ -214,7 +214,7 @@ describe("camoufox probe + bridge", () => {
 
   it("bridge rejects with E_RENDERER_UNAVAILABLE when the interpreter is missing", async () => {
     await expect(
-      runCamoufoxBridge("https://example.com", { ...GUARD, renderer: "camoufox", python: "no-such-python", maxBytes: 1000, timeoutMs: 1000 }),
+      runCamoufoxBridge("https://example.com", { ...GUARD, renderer: "camoufox", python: "no-such-python", maxChars: 1000, timeoutMs: 1000 }),
     ).rejects.toMatchObject({ code: "E_RENDERER_UNAVAILABLE" });
   });
 
@@ -227,7 +227,7 @@ describe("camoufox probe + bridge", () => {
     const script = join(dir, "slow_bridge.py");
     writeFileSync(script, "import time, sys\ntime.sleep(30)\n");
     const controller = new AbortController();
-    const opts = { ...GUARD, renderer: "camoufox" as const, python: "python3", bridgeScript: script, maxBytes: 1000, timeoutMs: 30_000, signal: controller.signal };
+    const opts = { ...GUARD, renderer: "camoufox" as const, python: "python3", bridgeScript: script, maxChars: 1000, timeoutMs: 30_000, signal: controller.signal };
     const p = runCamoufoxBridge("https://example.com", opts);
     setTimeout(() => controller.abort(), 100);
     await expect(p).rejects.toMatchObject({ code: "E_CANCELLED" });
@@ -240,7 +240,7 @@ describe("camoufox probe + bridge", () => {
     const dir = mkdtempSync(join(tmpdir(), "pwt-test-"));
     const script = join(dir, "bomb_bridge.py");
     writeFileSync(script, "import sys\nsys.stdout.write('A' * (7 * 1024 * 1024))\n");
-    const opts = { ...GUARD, renderer: "camoufox" as const, python: "python3", bridgeScript: script, rawBodyMaxBytes: 1024 * 1024, maxBytes: 1000, timeoutMs: 30_000 };
+    const opts = { ...GUARD, renderer: "camoufox" as const, python: "python3", bridgeScript: script, rawBodyMaxBytes: 1024 * 1024, maxChars: 1000, timeoutMs: 30_000 };
     await expect(runCamoufoxBridge("https://example.com", opts)).rejects.toMatchObject({ code: "E_RAW_TOO_LARGE" });
   });
 
@@ -263,7 +263,7 @@ describe("camoufox probe + bridge", () => {
           renderer: "camoufox",
           python: "python3",
           rawBodyMaxBytes: 32 * 1024 * 1024,
-          maxBytes: 65536,
+          maxChars: 65536,
           timeoutMs: 2000,
         }),
       ).rejects.toMatchObject({ code: "E_RAW_TOO_LARGE" });

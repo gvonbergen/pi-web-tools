@@ -56,12 +56,12 @@ const turndown = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fen
 
 export interface LightFetchOptions extends UrlGuardOptions {
   /** Caller-facing content cap: applies to the extracted/cleaned markdown or text. */
-  maxBytes: number;
+  maxChars: number;
   /**
    * Independent raw-response safety cap (raw, decompressed bytes), protecting
    * against decompression bombs and unbounded memory use. NOT derived from
-   * maxBytes — oversized or suspiciously-expanding responses are rejected with
-   * E_RAW_TOO_LARGE before extraction, while caller content over maxBytes is
+   * maxChars — oversized or suspiciously-expanding responses are rejected with
+   * E_RAW_TOO_LARGE before extraction, while caller content over maxChars is
    * simply truncated with truncated=true.
    */
   rawBodyMaxBytes: number;
@@ -139,7 +139,7 @@ export async function lightFetch(rawUrl: string, opts: LightFetchOptions): Promi
   if (contentLength > opts.rawBodyMaxBytes) {
     await response.body?.cancel();
     throw new WebToolsError("E_RAW_TOO_LARGE", `Raw response body of ${contentLength} bytes exceeds the safety cap of ${opts.rawBodyMaxBytes} bytes`, {
-      hint: "This safety cap bounds raw response size independently of the maxBytes content cap and cannot be raised per call (operator env: PI_WEB_TOOLS_RAW_BODY_MAX_BYTES).",
+      hint: "This safety cap bounds raw response size independently of the maxChars content cap and cannot be raised per call (operator env: PI_WEB_TOOLS_RAW_BODY_MAX_BYTES).",
     });
   }
 
@@ -168,19 +168,19 @@ export async function lightFetch(rawUrl: string, opts: LightFetchOptions): Promi
 
   const text = new TextDecoder(charset, { fatal: false }).decode(body);
   if (mime === "application/json" || mime === "application/javascript") {
-    return { result: finish(finalUrl, finalUrl, `JSON response (${body.length} bytes)`, body.length, text, "light", "node", {}, opts.maxBytes), html: "" };
+    return { result: finish(finalUrl, finalUrl, `JSON response (${body.length} bytes)`, body.length, text, "light", "node", {}, opts.maxChars), html: "" };
   }
   if (!mime.includes("html") && mime.startsWith("text/")) {
-    return { result: finish(finalUrl, finalUrl, undefined, body.length, "```text\n" + text + "\n```", "light", "node", {}, opts.maxBytes), html: "" };
+    return { result: finish(finalUrl, finalUrl, undefined, body.length, "```text\n" + text + "\n```", "light", "node", {}, opts.maxChars), html: "" };
   }
 
   // HTML: extract with Readability over a sanitized DOM. The caller-facing
-  // maxBytes cap applies HERE — to the cleaned/extracted markdown — not to
+  // maxChars cap applies HERE — to the cleaned/extracted markdown — not to
   // the raw decompressed HTML (which is bounded by the independent safety cap).
   const { markdown, title, metadata, extractedLength } = extractHtml(text, finalUrl);
   const needsRendering = extractedLength < MIN_CONTENT_LENGTH || SPA_INDICATORS.some((i) => text.includes(i));
   const warning = needsRendering ? "Page appears to require JavaScript rendering (tier=rendered may extract more)." : undefined;
-  return { result: finish(rawUrl, finalUrl, title, body.length, markdown, "light", "node", metadata, opts.maxBytes, warning, needsRendering), html: "" };
+  return { result: finish(rawUrl, finalUrl, title, body.length, markdown, "light", "node", metadata, opts.maxChars, warning, needsRendering), html: "" };
 }
 
 async function guardedFetch(url: string, opts: LightFetchOptions): Promise<Response> {
@@ -246,7 +246,7 @@ async function readBodyCapped(response: Response, capBytes: number, signal?: Abo
       throw new WebToolsError(
         "E_RAW_TOO_LARGE",
         `Raw decompressed body exceeds the safety cap of ${capBytes} bytes (decompression bomb protection)`,
-        { hint: "This safety cap is independent of the per-call maxBytes content cap; it bounds raw response size before extraction (operator env: PI_WEB_TOOLS_RAW_BODY_MAX_BYTES)." },
+        { hint: "This safety cap is independent of the per-call maxChars content cap; it bounds raw response size before extraction (operator env: PI_WEB_TOOLS_RAW_BODY_MAX_BYTES)." },
       );
     }
     chunks.push(value);
@@ -272,7 +272,7 @@ function looksCompressed(raw: Uint8Array, encoding: string): boolean {
 function assertNotBomb(decompressedBytes: number, compressedBytes: number, opts: LightFetchOptions): void {
   if (decompressedBytes > opts.rawBodyMaxBytes) {
     throw new WebToolsError("E_RAW_TOO_LARGE", `Raw decompressed body of ${decompressedBytes} bytes exceeds the safety cap of ${opts.rawBodyMaxBytes} bytes`, {
-      hint: "This safety cap is independent of the per-call maxBytes content cap (operator env: PI_WEB_TOOLS_RAW_BODY_MAX_BYTES).",
+      hint: "This safety cap is independent of the per-call maxChars content cap (operator env: PI_WEB_TOOLS_RAW_BODY_MAX_BYTES).",
     });
   }
   if (decompressedBytes <= BOMB_MIN_DECOMPRESSED_BYTES) return;
@@ -280,7 +280,7 @@ function assertNotBomb(decompressedBytes: number, compressedBytes: number, opts:
     throw new WebToolsError(
       "E_RAW_TOO_LARGE",
       `Response expands ${Math.round(decompressedBytes / compressedBytes)}x (${compressedBytes} -> ${decompressedBytes} bytes); rejected as a probable decompression bomb`,
-      { hint: "Highly-compressible oversized payloads are rejected before extraction; this safety check is independent of the maxBytes content cap." },
+      { hint: "Highly-compressible oversized payloads are rejected before extraction; this safety check is independent of the maxChars content cap." },
     );
   }
 
@@ -383,7 +383,7 @@ async function fetchPdf(rawUrl: string, finalUrl: string, body: Uint8Array, opts
     opts.signal?.addEventListener("abort", onAbort, { once: true });
     child.stdin.end(body);
   });
-  return { result: finish(rawUrl, finalUrl, undefined, body.length, "```text\n" + text + "\n```", "light", "node", {}, opts.maxBytes), html: "" };
+  return { result: finish(rawUrl, finalUrl, undefined, body.length, "```text\n" + text + "\n```", "light", "node", {}, opts.maxChars), html: "" };
 }
 
 async function probePdfTool(): Promise<boolean> {
@@ -403,15 +403,15 @@ function finish(
   tier: "light" | "rendered",
   provider: FetchResult["provider"],
   metadata: NonNullable<FetchResult["metadata"]>,
-  maxBytes: number,
+  maxChars: number,
   warning?: string,
   needsRendering?: boolean,
 ): FetchResult {
-  // The caller-facing maxBytes cap applies to the extracted/cleaned content
+  // The caller-facing maxChars cap applies to the extracted/cleaned content
   // returned to the agent — never to the raw response (safety-capped
   // separately, see readBodyCapped/assertNotBomb). Content over the cap is
   // truncated with an actionable warning, not an error.
-  const { markdown, truncated, warning: note } = capContent(fullMarkdown, maxBytes);
+  const { markdown, truncated, warning: note } = capContent(fullMarkdown, maxChars);
   if (note) warning = warning ? `${warning} ${note}` : note;
   return {
     url,
