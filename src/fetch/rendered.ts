@@ -52,7 +52,7 @@ export interface RenderedFetchOptions extends UrlGuardOptions {
   /** Test hook: override the bridge script path. */
   bridgeScript?: string;
   /** Caller-facing content cap: applies to the extracted/cleaned markdown. */
-  maxBytes: number;
+  maxChars: number;
   /** Independent raw-response safety cap (see LightFetchOptions.rawBodyMaxBytes). */
   rawBodyMaxBytes: number;
   timeoutMs: number;
@@ -155,7 +155,7 @@ async function firecrawlFetch(rawUrl: string, opts: RenderedFetchOptions): Promi
     const markdown = payload.data?.markdown ?? "";
     const meta = payload.data?.metadata ?? {};
     const egressWarning = "Rendered remotely via Firecrawl: page content was fetched by a third-party service (egress).";
-    const capped = capContent(markdown, opts.maxBytes);
+    const capped = capContent(markdown, opts.maxChars);
     const { truncated, warning: truncationWarning } = capped;
     return {
       url: rawUrl,
@@ -170,7 +170,7 @@ async function firecrawlFetch(rawUrl: string, opts: RenderedFetchOptions): Promi
       provider: "firecrawl",
       fetchedAt: new Date().toISOString(),
       truncated,
-      bytes: capped.bytes,
+      bytes: Buffer.byteLength(markdown, "utf8"),
       warning: truncationWarning ? `${egressWarning} ${truncationWarning}` : egressWarning,
     };
   } finally {
@@ -238,7 +238,7 @@ export async function runCamoufoxBridge(url: string, opts: RenderedFetchOptions)
           parsed = undefined;
         }
         if (typeof parsed?.html === "string" && Buffer.byteLength(parsed.html, "utf8") > opts.rawBodyMaxBytes) {
-          reject(new WebToolsError("E_RAW_TOO_LARGE", `Rendered page HTML exceeds the raw-response safety cap of ${opts.rawBodyMaxBytes} bytes`, { hint: "This safety cap is independent of the per-call maxBytes content cap (operator env: PI_WEB_TOOLS_RAW_BODY_MAX_BYTES)." }));
+          reject(new WebToolsError("E_RAW_TOO_LARGE", `Rendered page HTML exceeds the raw-response safety cap of ${opts.rawBodyMaxBytes} bytes`, { hint: "This safety cap is independent of the per-call maxChars content cap (operator env: PI_WEB_TOOLS_RAW_BODY_MAX_BYTES)." }));
           return;
         }
         if (parsed && parsed.ok) resolve(parsed);
@@ -257,7 +257,7 @@ async function camoufoxFetch(rawUrl: string, opts: RenderedFetchOptions): Promis
   }
   const extracted = extractHtml(bridge.html, bridge.finalUrl ?? rawUrl);
   const markdown = extracted.markdown || (bridge.html.length < 2000 ? "```html\n" + bridge.html + "\n```" : "");
-  const capped = capContent(markdown, opts.maxBytes);
+  const capped = capContent(markdown, opts.maxChars);
   const { truncated } = capped;
   return {
     url: rawUrl,
@@ -283,7 +283,7 @@ export interface AutoFetchOptions extends UrlGuardOptions {
   python: string;
   /** Independent raw-response safety cap (see LightFetchOptions.rawBodyMaxBytes). */
   rawBodyMaxBytes: number;
-  maxBytes: number;
+  maxChars: number;
   timeoutMs: number;
   signal?: AbortSignal;
   /** Called when the light tier is unavailable and escalation would be needed. */

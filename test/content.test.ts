@@ -1,19 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { capContent } from "../src/fetch/content.ts";
 
-describe("UTF-8 content cap", () => {
-  it.each([0, 0.5, 2.9, 3, 4.5, 6.9, 7, 7.5])("preserves characters with a %s byte cap", (cap) => {
+describe("character content cap", () => {
+  it.each([0, 0.5, 1, 1.9, 2, 2.5, 3])("preserves whole characters with a %s char cap", (cap) => {
     const result = capContent("界😀", cap);
-    const expected = cap < 3 ? "" : cap < 7 ? "界" : "界😀";
+    const expected = cap < 1 ? "" : cap < 2 ? "界" : "界😀";
     expect(result.markdown).toBe(expected);
-    expect(Buffer.byteLength(result.markdown)).toBeLessThanOrEqual(cap);
-    expect(result.truncated).toBe(cap < 7);
-    expect(result.bytes).toBe(7);
+    expect(Array.from(result.markdown).length).toBeLessThanOrEqual(Math.floor(cap));
+    expect(result.truncated).toBe(cap < 2);
+    expect(result.characters).toBe(2);
     if (result.truncated) {
-      expect(result.warning).toContain(`returning the first ${Buffer.byteLength(expected)} bytes`);
+      expect(result.warning).toContain(`returning the first ${expected.length} characters`);
     } else {
       expect(result.warning).toBeUndefined();
     }
+  });
+
+  it("never splits a surrogate pair (UTF-16 whole-character boundary)", () => {
+    expect(capContent("a😀b", 2)).toMatchObject({ markdown: "a😀", truncated: true });
   });
 
   it.each([-1, -0.5, Number.NaN])("normalizes invalid lower bounds (%s) to zero", (cap) => {

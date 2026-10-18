@@ -8,7 +8,7 @@ import { formatFetchMarkdown } from "../src/registry.ts";
 const GUARD = { allowLocalNetworks: true }; // tests talk to 127.0.0.1 directly
 // Small raw-safety cap so streaming-cap tests stay cheap; raised per-test where
 // the ratio guard must be exercised instead.
-const BASE_OPTS = { ...GUARD, maxBytes: 64 * 1024, rawBodyMaxBytes: 1024 * 1024, timeoutMs: 5000 };
+const BASE_OPTS = { ...GUARD, maxChars: 64 * 1024, rawBodyMaxBytes: 1024 * 1024, timeoutMs: 5000 };
 
 let server: Server;
 let baseUrl: string;
@@ -256,11 +256,11 @@ describe("lightFetch: security limits", () => {
     expect(result.markdown).toContain("Hello");
   });
 
-  it("caps Unicode output by UTF-8 bytes", async () => {
-    const { result } = await lightFetch(`${baseUrl}/unicode`, { ...BASE_OPTS, maxBytes: 180001 });
+  it("caps Unicode output by characters", async () => {
+    const { result } = await lightFetch(`${baseUrl}/unicode`, { ...BASE_OPTS, maxChars: 60000 });
     expect(result.markdown).toBe("界".repeat(60000));
     expect(result.truncated).toBe(true);
-    expect(result.warning).toContain("270000 bytes; returning the first 180000 bytes");
+    expect(result.warning).toContain("90000 characters; returning the first 60000 characters");
   });
 
   it("rejects chunked compressed bombs without Content-Length", async () => {
@@ -317,19 +317,19 @@ describe("lightFetch: security limits", () => {
   });
 
   it("extracts markup-heavy raw HTML over the content cap whose cleaned output fits (SGLang shape)", async () => {
-    // Raw HTML (script payload) is far above maxBytes, but the cleaned markdown
+    // Raw HTML (script payload) is far above maxChars, but the cleaned markdown
     // is not: the caller cap applies AFTER extraction, not to the raw body.
     const { result } = await lightFetch(`${baseUrl}/markup-heavy`, BASE_OPTS);
     expect(result.truncated).toBe(false);
     expect(result.markdown).toContain("PD Disaggregation");
-    expect(result.markdown.length).toBeLessThan(BASE_OPTS.maxBytes);
+    expect(result.markdown.length).toBeLessThan(BASE_OPTS.maxChars);
   });
 
   it("truncates cleaned output exceeding the caller cap with an actionable warning", async () => {
     const { result } = await lightFetch(`${baseUrl}/huge`, BASE_OPTS);
     expect(result.truncated).toBe(true);
-    expect(result.markdown.length).toBe(BASE_OPTS.maxBytes);
-    expect(result.warning).toMatch(/maxBytes cap/);
+    expect(result.markdown.length).toBe(BASE_OPTS.maxChars);
+    expect(result.warning).toMatch(/maxChars cap/);
   });
 
   it("rejects raw responses over the independent safety cap with E_RAW_TOO_LARGE", async () => {

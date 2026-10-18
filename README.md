@@ -18,7 +18,7 @@ Two independent search providers are supported behind one provider-neutral surfa
 
 ```bash
 # from a git ref (recommended)
-pi install git:github.com/gvonbergen/pi-web-tools@v0.1.0
+pi install git:github.com/gvonbergen/pi-web-tools@v0.2.0
 
 # or temporarily for one run
 pi -e git:github.com/gvonbergen/pi-web-tools
@@ -43,11 +43,12 @@ Serper uses the Google places pack (stable `cid` ids). Brave uses web-search loc
 ### web_fetch
 
 ```jsonc
-{ "url": "https://example.com", "tier": "auto", "renderer": "camoufox", "maxBytes": 2097152, "timeoutMs": 30000 }
+{ "url": "https://example.com", "tier": "auto", "renderer": "camoufox", "maxChars": 2097152, "timeoutMs": 30000 }
 ```
 
-- **`maxBytes` (content cap)** — bounds the **extracted/cleaned** markdown or text returned to the agent, not the raw response. Raw responses that exceed the caller cap but extract to a smaller cleaned result succeed normally (e.g. a markup-heavy HTML page extracting to a short markdown). Content over the cap is truncated with `truncated: true` plus a warning telling you to raise `maxBytes` — it is **not** an error. Units are UTF-8 bytes of the returned markdown/text; truncation preserves whole characters (there is no token-based limit). See [configuration](docs/configuration.md) for the default.
-- **Raw-response safety cap (independent)** — see [resource limits](docs/security.md#resource-limits) for protection before extraction and renderer-specific scope; it is never derived from `maxBytes`.
+- **`maxChars` (content cap)** — bounds the **extracted/cleaned** markdown or text returned to the agent, not the raw response. Raw responses that exceed the caller cap but extract to a smaller cleaned result succeed normally (e.g. a markup-heavy HTML page extracting to a short markdown). Content over the cap is truncated with `truncated: true` plus a warning telling you to raise `maxChars` — it is **not** an error. Units are characters of the returned markdown/text (whole characters are preserved; there is no token-based limit). See [configuration](docs/configuration.md) for the default.
+  - *Deprecated alias:* `maxBytes` still works with the same value semantics for backward compatibility, but it caps characters, not bytes; using it adds a one-time deprecation note to the result. Prefer `maxChars`.
+- **Raw-response safety cap (independent)** — see [resource limits](docs/security.md#resource-limits) for protection before extraction and renderer-specific scope; it is never derived from `maxChars`.
 
 - **`tier=light`** — plain HTTP: SSRF guard, ≤5 redirects with per-hop re-check, MIME gating, Readability → DOMPurify → Turndown extraction to markdown. Optional pdftotext (poppler) for PDFs. Named hosts whose DNS deliberately resolves into private space can be exempted via `PI_WEB_TOOLS_ALLOWED_HOSTS` (per-host opt-in, empty by default — see [docs/security.md](docs/security.md)).
   - *Migration note:* previously the caller cap applied to the raw decompressed body; it now applies to the extracted markdown. Calls that previously failed with `E_CONTENT_TOO_LARGE` on markup-heavy pages now succeed; raw-response protection moved to the independent safety cap (`E_RAW_TOO_LARGE`).
@@ -99,4 +100,4 @@ Tests cover normalizers (provider fixtures), mocked HTTP (401/429/5xx, retries, 
 
 ## Versioning
 
-Semver. Releases are git tags: `pi install git:github.com/gvonbergen/pi-web-tools@v0.1.0`. npm publishing may follow later.
+Semver. Releases are git tags: `pi install git:github.com/gvonbergen/pi-web-tools@v0.2.0`. npm publishing may follow later.
